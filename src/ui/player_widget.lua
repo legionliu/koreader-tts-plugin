@@ -646,10 +646,19 @@ end
 --- Highlight current sentence using partial refresh (delegated to CanvasHighlight)
 -- @param bboxes Array of bounding box tables { x, y, w, h }
 -- @param mode Highlight mode: "gray" | "underline" | "none"
-function UIPlayer:highlightSentence(bboxes, mode)
+-- @param chunk Optional Chunk table { text, raw_text, page, ... }
+function UIPlayer:highlightSentence(bboxes, mode, chunk)
     mode = mode or (self.settings and self.settings:get("highlight_mode")) or "gray"
     if self.highlighter then
-        self.highlighter:highlightSentence(self.view, bboxes, mode)
+        local ctx = {
+            ui = self.ui,
+            view = self.view or (self.ui and self.ui.view),
+            document = (self.ui and self.ui.document) or (self.playback_queue and self.playback_queue.document),
+            sentence_text = chunk and (chunk.raw_text or chunk.text),
+            current_page = (chunk and chunk.page) or self.current_page or (self.playback_queue and self.playback_queue.current_page),
+            bar_top = self.card_container and self.card_container.dimen and self.card_container.dimen.y,
+        }
+        self.highlighter:highlightSentence(self.view, bboxes, mode, ctx)
         self.current_highlight = self.highlighter.current_highlight
     end
 end
@@ -737,8 +746,8 @@ function UIPlayer:onChunkChange(chunk, page, index, total)
     end
 
     -- 2. Synchronize sentence highlight
-    if chunk and chunk.bboxes then
-        self:highlightSentence(chunk.bboxes)
+    if chunk then
+        self:highlightSentence(chunk.bboxes, nil, chunk)
     end
 
     -- 3. Update buffer & play/pause icon
