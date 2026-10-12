@@ -16,7 +16,7 @@ async fn test_successful_speech_fetch_with_auth() {
         .and(path("/v1/audio/speech"))
         .and(header("content-type", "application/json"))
         .and(header("authorization", "Bearer secret_api_token"))
-        .and(header("user-agent", "KOReader-TTS/0.1.0"))
+        .and(header("user-agent", "KOReader-TTS/0.0.1"))
         .respond_with(ResponseTemplate::new(200).set_body_bytes(fake_audio_bytes.clone()))
         .expect(1)
         .mount(&mock_server)

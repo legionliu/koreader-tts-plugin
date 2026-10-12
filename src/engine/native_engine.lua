@@ -48,6 +48,7 @@ function NativeEngine:new(options, lib, loaded_path)
     instance.api_key = options.api_key or ""
     instance.cache_dir = options.cache_dir or "cache/tts"
     instance.preload_count = options.preload_count or 1
+    instance.max_cache_mb = options.max_cache_mb or 50
 
     local config_table = {
         server_url = instance.server_url,
@@ -57,6 +58,7 @@ function NativeEngine:new(options, lib, loaded_path)
         api_key = (instance.api_key ~= "") and instance.api_key or nil,
         cache_dir = instance.cache_dir,
         preload_count = instance.preload_count,
+        max_cache_mb = instance.max_cache_mb,
     }
 
     local c_json = FfiMarshaler.marshalConfigJson(config_table)
@@ -167,6 +169,7 @@ function NativeEngine:updateConfig(new_options)
     if new_options.speed then self.speed = new_options.speed end
     if new_options.api_key ~= nil then self.api_key = new_options.api_key end
     if new_options.preload_count then self.preload_count = new_options.preload_count end
+    if new_options.max_cache_mb then self.max_cache_mb = new_options.max_cache_mb end
 
     if self.ctx and self.lib and self.lib.tts_core_context_update_config then
         local config_table = {
@@ -177,6 +180,7 @@ function NativeEngine:updateConfig(new_options)
             api_key = (self.api_key ~= "") and self.api_key or nil,
             cache_dir = self.cache_dir,
             preload_count = self.preload_count,
+            max_cache_mb = self.max_cache_mb,
         }
         local c_json = FfiMarshaler.marshalConfigJson(config_table)
         return self.lib.tts_core_context_update_config(self.ctx, c_json) == 0

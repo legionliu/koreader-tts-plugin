@@ -142,7 +142,7 @@ impl HttpClient {
         let mut default_headers = header::HeaderMap::new();
         default_headers.insert(
             header::USER_AGENT,
-            header::HeaderValue::from_static("KOReader-TTS/0.1.0"),
+            header::HeaderValue::from_static("KOReader-TTS/0.0.1"),
         );
 
         let client = Client::builder()

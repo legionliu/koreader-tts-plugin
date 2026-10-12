@@ -40,7 +40,10 @@ local DEFAULT_SETTINGS = {
     last_page           = 1,                           -- Last read page
     last_chunk_index    = 1,                           -- Last read chunk index
 
-    -- 6. Pronunciation dictionary & custom mappings
+    -- 6. Audio Cache Management
+    cache_max_mb        = 50,                          -- Auto-clear cache quota limit in MB (20 - 1000)
+
+    -- 7. Pronunciation dictionary & custom mappings
     custom_pronunciations = {},                        -- Custom table { [orig_word] = "replacement" }
 }
 
@@ -187,6 +190,8 @@ function Settings:set(key, value)
         if not allowed[value] then
             return false, "Invalid audio_format: " .. tostring(value)
         end
+    elseif key == "cache_max_mb" then
+        value = math.max(20, math.min(1000, math.floor(value)))
     end
 
     self.data[key] = value

@@ -80,6 +80,11 @@ run_test("Acceptance: Settings dialog & pronunciation word mapping", function()
     plugin:showSettingsDialog()
     assert(plugin.settings_dialog ~= nil, "Settings dialog must open successfully")
 
+    -- Click item 1 to open server, voice and cache settings
+    local item1_cb = plugin.settings_dialog.buttons[1][1].callback
+    assert(type(item1_cb) == "function")
+    item1_cb()
+
     plugin:showWordMappingDialog()
     assert(plugin.word_mapping_dialog ~= nil, "Word mapping dialog must open successfully")
 
@@ -190,7 +195,7 @@ run_test("Acceptance: Bilingual switching (English default and Vietnamese locali
     i18n.setLanguage("en")
     local menu_en = {}
     plugin:addToMainMenu(menu_en)
-    assert(menu_en.koreader_tts.text == "Text-to-Speech (TTS)", "English main menu title")
+    assert(menu_en.koreader_tts.text == "Text-to-Speech", "English main menu title")
     assert(menu_en.koreader_tts.sub_item_table[1].text == "▶ Read from page start", "English sub menu item")
 
     -- 2. Test in Vietnamese
@@ -202,6 +207,45 @@ run_test("Acceptance: Bilingual switching (English default and Vietnamese locali
 
     -- Reset back to auto
     i18n.setLanguage(nil)
+    plugin:onExit()
+end)
+
+-- 8. Audio Cache Management & On-Demand Clearing
+run_test("Acceptance: Audio cache measurement and clear functionality", function()
+    local plugin = createTestPlugin()
+
+    -- Create dummy cache file
+    local dummy_path = "cache/tts/chunk_test_dummy.wav"
+    local f = io.open(dummy_path, "wb")
+    if f then
+        f:write(string.rep("RIFF0000WAVEfmt ", 1024 * 10))
+        f:close()
+    end
+
+    -- Open settings dialog
+    plugin:showSettingsDialog()
+    assert(plugin.settings_dialog ~= nil)
+
+    -- Item 3 opens cache management dialog
+    local item3_cb = plugin.settings_dialog.buttons[3][1].callback
+    assert(type(item3_cb) == "function")
+    item3_cb()
+
+    -- Verify that cache file exists before clearing
+    local exists_before = io.open(dummy_path, "rb")
+    assert(exists_before ~= nil, "Dummy cache file must exist before clear")
+    exists_before:close()
+
+    -- Test opening cache management dialog directly
+    plugin:showCacheManagementDialog()
+
+    -- Clear cache via plugin:clearAllAudioCache()
+    local freed = plugin:clearAllAudioCache()
+    assert(freed >= 0)
+
+    local exists_after = io.open(dummy_path, "rb")
+    assert(exists_after == nil, "Dummy cache file must be deleted after clear")
+
     plugin:onExit()
 end)
 

@@ -132,6 +132,8 @@ pub struct CoreConfig {
     pub cache_dir: String,
     #[serde(default = "default_preload_count")]
     pub preload_count: usize,
+    #[serde(default = "default_max_cache_mb")]
+    pub max_cache_mb: u64,
 }
 
 fn default_server_url() -> String {
@@ -155,6 +157,9 @@ fn default_cache_dir() -> String {
 fn default_preload_count() -> usize {
     1
 }
+fn default_max_cache_mb() -> u64 {
+    50
+}
 
 impl Default for CoreConfig {
     fn default() -> Self {
@@ -166,6 +171,7 @@ impl Default for CoreConfig {
             api_key: None,
             cache_dir: default_cache_dir(),
             preload_count: default_preload_count(),
+            max_cache_mb: default_max_cache_mb(),
         }
     }
 }
@@ -206,10 +212,16 @@ impl TtsCoreEngine {
             HttpClient::new(http_cfg).map_err(|e| format!("HTTP client init failed: {}", e))?,
         );
 
+        let max_disk_bytes = if parsed_config.max_cache_mb > 0 {
+            parsed_config.max_cache_mb * 1024 * 1024
+        } else {
+            50 * 1024 * 1024
+        };
         let cache_manager = Arc::new(
-            CacheManager::new(&parsed_config.cache_dir, 50 * 1024 * 1024, 4)
+            CacheManager::new(&parsed_config.cache_dir, max_disk_bytes, 4)
                 .map_err(|e| format!("CacheManager init failed: {}", e))?,
         );
+        let _ = cache_manager.prune_disk_cache();
 
         let prefetch_queue = Arc::new(Mutex::new(PrefetchQueue::new(parsed_config.preload_count)));
 
@@ -416,6 +428,8 @@ impl TtsCoreEngine {
                             // Save to disk cache
                             let saved_path_res = c_clone.put_disk_bytes(&cache_key, &format, &audio_bytes);
                             let path_str = saved_path_res.ok().map(|p| p.to_string_lossy().to_string());
+                            // Automatically prune disk cache if quota exceeds configured limit (default 50MB)
+                            let _ = c_clone.prune_disk_cache();
 
                             // Decode audio
                             let (arc_buf, dur) = match AudioDecoder::decode_from_memory(audio_bytes, Some(&format)) {
@@ -598,6 +612,10 @@ pub unsafe extern "C" fn tts_core_context_update_config(
 
         let context = &mut *ctx;
         if let Ok(new_cfg) = serde_json::from_str::<CoreConfig>(c_str) {
+            if new_cfg.max_cache_mb > 0 {
+                context.engine.cache_manager.set_max_disk_bytes(new_cfg.max_cache_mb * 1024 * 1024);
+                let _ = context.engine.cache_manager.prune_disk_cache();
+            }
             if let Ok(mut conf) = context.engine.config.lock() {
                 *conf = new_cfg;
             }

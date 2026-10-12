@@ -66,6 +66,12 @@ run_test("SettingsManager: default schema and bounds clamping", function()
 
     sm:set("min_chunk_chars", 500)
     assert(sm:get("min_chunk_chars") == 250, "min_chunk_chars must clamp to max 250")
+
+    assert(sm:get("cache_max_mb") == 50, "Default cache_max_mb must be 50")
+    sm:set("cache_max_mb", 5000)
+    assert(sm:get("cache_max_mb") == 1000, "cache_max_mb must clamp to max 1000")
+    sm:set("cache_max_mb", 5)
+    assert(sm:get("cache_max_mb") == 20, "cache_max_mb must clamp to min 20")
 end)
 
 run_test("SettingsManager: pronunciation dictionary CRUD", function()

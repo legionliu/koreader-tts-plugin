@@ -64,7 +64,7 @@ Restart KOReader, then go to **Settings (Gear)** ➔ **Plugin management** and e
 
 ## Configuration
 
-1. In KOReader, tap Top Menu ➔ **Text-to-Speech (TTS)** ➔ **Plugin settings**.
+1. In KOReader, tap Top Menu ➔ **Text-to-Speech** ➔ **Plugin settings**.
 2. Configure your speech server:
    - **Server URL**: `https://api.openai.com/v1/audio/speech` (or self-hosted `http://<ip>:8000/v1/audio/speech`).
    - **API Key**: Enter your OpenAI API key (`sk-...`), or leave blank for local servers without auth.
@@ -76,12 +76,13 @@ Restart KOReader, then go to **Settings (Gear)** ➔ **Plugin management** and e
 ## Screenshots
 
 <p align="center">
-  <img src="docs/screenshots/playback.png" width="48%" alt="Reading & Highlighting">
-  <img src="docs/screenshots/settings.png" width="48%" alt="Settings Dialog">
+  <img src="docs/screenshots/playback.png" width="48%" alt="Reading & Controls">
+  <img src="docs/screenshots/bubble.png" width="48%" alt="Mini Floating Bubble">
 </p>
 
 <p align="center">
   <img src="docs/screenshots/menu.png" width="48%" alt="Reader Menu">
+  <img src="docs/screenshots/settings.png" width="48%" alt="Settings Dialog">
 </p>
 
 ---

@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
@@ -96,7 +97,7 @@ impl BoundedMemoryCache {
 
 pub struct CacheManager {
     cache_dir: PathBuf,
-    max_disk_bytes: u64,
+    max_disk_bytes: AtomicU64,
     memory_cache: Mutex<BoundedMemoryCache>,
 }
 
@@ -112,15 +113,28 @@ impl CacheManager {
             fs::create_dir_all(&dir)?;
         }
 
+        let limit = if max_disk_bytes == 0 {
+            50 * 1024 * 1024
+        } else {
+            max_disk_bytes
+        };
+
         Ok(Self {
             cache_dir: dir,
-            max_disk_bytes: if max_disk_bytes == 0 {
-                50 * 1024 * 1024
-            } else {
-                max_disk_bytes
-            },
+            max_disk_bytes: AtomicU64::new(limit),
             memory_cache: Mutex::new(BoundedMemoryCache::new(memory_capacity)),
         })
+    }
+
+    /// Sets maximum disk cache quota in bytes.
+    pub fn set_max_disk_bytes(&self, bytes: u64) {
+        let limit = if bytes == 0 { 50 * 1024 * 1024 } else { bytes };
+        self.max_disk_bytes.store(limit, Ordering::Relaxed);
+    }
+
+    /// Gets current maximum disk cache quota in bytes.
+    pub fn max_disk_bytes(&self) -> u64 {
+        self.max_disk_bytes.load(Ordering::Relaxed)
     }
 
     /// Computes a deterministic SHA-256 hash cache key.
@@ -242,14 +256,15 @@ impl CacheManager {
             }
         }
 
-        if total_bytes <= self.max_disk_bytes {
+        let max_bytes = self.max_disk_bytes();
+        if total_bytes <= max_bytes {
             return Ok(0);
         }
 
         // Sort oldest first
         files.sort_by_key(|f| f.modified);
 
-        let target_bytes = (self.max_disk_bytes as f64 * 0.8) as u64;
+        let target_bytes = (max_bytes as f64 * 0.8) as u64;
         let mut pruned_count = 0;
 
         for file in files {
@@ -263,6 +278,29 @@ impl CacheManager {
         }
 
         Ok(pruned_count)
+    }
+
+    /// Clears all L1 memory cache entries and all chunk files on disk.
+    pub fn clear_all_cache(&self) -> Result<usize, CacheError> {
+        self.clear_memory();
+        let entries = match fs::read_dir(&self.cache_dir) {
+            Ok(e) => e,
+            Err(_) => return Ok(0),
+        };
+        let mut count = 0;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    if name.starts_with("chunk_") {
+                        if fs::remove_file(path).is_ok() {
+                            count += 1;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(count)
     }
 
     /// Clears all L1 memory cache entries.

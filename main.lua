@@ -51,6 +51,8 @@ function KoreaderTTS:init()
         end
     end
 
+    self.cache_dir = cache_dir
+
     self.engine = EngineFactory.create{
         server_url = self.settings:get("server_url"),
         voice = self.settings:get("voice"),
@@ -59,6 +61,7 @@ function KoreaderTTS:init()
         api_key = self.settings:get("api_key"),
         cache_dir = cache_dir,
         preload_count = self.settings:get("preload_count") or 1,
+        max_cache_mb = self.settings:get("cache_max_mb") or 50,
         plugin_dir = plugin_path,
     }
     self.tts_service = self.engine
@@ -253,7 +256,7 @@ function KoreaderTTS:addToMainMenu(menu_items)
     })
 
     menu_items.koreader_tts = {
-        text = _("Text-to-Speech (TTS)"),
+        text = _("Text-to-Speech"),
         sorting_hint = "tools",
         sub_item_table = sub_items,
     }
@@ -453,20 +456,25 @@ function KoreaderTTS:showSleepTimerDialog()
 end
 
 --- Stop TTS playback
-function KoreaderTTS:onStopTTS()
+-- @param silent boolean If true, suppress InfoMessage toast (used on document close / app exit)
+function KoreaderTTS:onStopTTS(silent)
+    local was_active = self.playback_queue and (
+        self.playback_queue:getState() == "PLAYING" or
+        self.playback_queue:getState() == "PREFETCHING" or
+        self.playback_queue:getState() == "PAUSED"
+    )
     if self.playback_queue then
         self.playback_queue:stop()
     end
     if self.ui_player then
         self.ui_player:hide()
     end
-    if self.engine and self.engine.client and self.engine.client.clearCache then
-        pcall(self.engine.client.clearCache, self.engine.client, 86400)
+    if not silent and was_active then
+        UIManager:show(InfoMessage:new{
+            text = _("Stopped reading."),
+            timeout = 2,
+        })
     end
-    UIManager:show(InfoMessage:new{
-        text = _("Stopped reading."),
-        timeout = 2,
-    })
 end
 
 --- Test playback of first sentence on page (Task 3.3)
@@ -921,6 +929,192 @@ function KoreaderTTS:showWordMappingDialog()
     UIManager:show(this.word_mapping_dialog)
 end
 
+--- Get total size of audio cache directory in megabytes
+function KoreaderTTS:getAudioCacheSizeMB()
+    local total_bytes = 0
+    local cdir = self.cache_dir or "cache/tts"
+    local is_audio = function(f)
+        return f:match("%.wav$") or f:match("%.flac$") or f:match("%.mp3$") or f:match("%.opus$") or f:match("%.tmp$")
+    end
+    local ok, lfs = pcall(require, "lfs")
+    if ok and lfs and lfs.dir then
+        pcall(function()
+            for f in lfs.dir(cdir) do
+                if is_audio(f) then
+                    local attrs = lfs.attributes(cdir .. "/" .. f)
+                    if attrs and attrs.size then
+                        total_bytes = total_bytes + attrs.size
+                    end
+                end
+            end
+        end)
+    else
+        pcall(function()
+            local is_win = (package.config:sub(1, 1) == "\\")
+            if not is_win then
+                local h = io.popen(string.format('du -sk "%s" 2>/dev/null', cdir))
+                if h then
+                    local l = h:read("*l")
+                    h:close()
+                    if l then
+                        local kb = tonumber(l:match("^(%d+)"))
+                        if kb then total_bytes = kb * 1024 end
+                    end
+                end
+            end
+        end)
+    end
+    return math.floor((total_bytes / (1024 * 1024)) * 10) / 10
+end
+
+--- Clear all audio chunk files on disk
+function KoreaderTTS:clearAllAudioCache()
+    local freed_mb = self:getAudioCacheSizeMB()
+    local cdir = self.cache_dir or "cache/tts"
+    local is_audio = function(f)
+        return f:match("%.wav$") or f:match("%.flac$") or f:match("%.mp3$") or f:match("%.opus$") or f:match("%.tmp$")
+    end
+    local ok, lfs = pcall(require, "lfs")
+    if ok and lfs and lfs.dir then
+        pcall(function()
+            for f in lfs.dir(cdir) do
+                if is_audio(f) then
+                    os.remove(cdir .. "/" .. f)
+                end
+            end
+        end)
+    else
+        pcall(function()
+            local is_win = (package.config:sub(1, 1) == "\\")
+            local cmd = is_win and string.format('del /Q "%s\\*.*" 2>nul', cdir:gsub("/", "\\"))
+                               or string.format('rm -f "%s"/chunk_* 2>/dev/null', cdir)
+            os.execute(cmd)
+        end)
+    end
+    if self.engine and self.engine.client and self.engine.client.clearCache then
+        pcall(self.engine.client.clearCache, self.engine.client, 0)
+    end
+    return freed_mb
+end
+
+--- Audio Cache Management Dialog (Task: Cache Quota & On-Demand Clearing)
+function KoreaderTTS:showCacheManagementDialog()
+    local ok_l, log = pcall(require, "logger")
+    if ok_l and log then log.warn("TTS: showCacheManagementDialog() CALLED!") end
+    local this = self
+    local cache_mb = this:getAudioCacheSizeMB()
+    local cur_limit = this.settings:get("cache_max_mb") or 50
+
+    local cache_dialog
+
+    local function selectLimit(limit_val)
+        this.settings:set("cache_max_mb", limit_val)
+        this.settings:save()
+        if this.engine and this.engine.updateConfig then
+            this.engine:updateConfig({ max_cache_mb = limit_val })
+        end
+        if cache_dialog then
+            pcall(UIManager.close, UIManager, cache_dialog)
+            cache_dialog = nil
+        end
+        UIManager:show(InfoMessage:new{
+            text = string.format(_("Saved cache limit: %d MB"), limit_val),
+            timeout = 2,
+        })
+        UIManager:scheduleIn(0.05, function()
+            this:showCacheManagementDialog()
+        end)
+    end
+
+    local function openLimitChoiceDialog()
+        local ok_l2, log2 = pcall(require, "logger")
+        if ok_l2 and log2 then log2.warn("TTS: openLimitChoiceDialog() CALLED!") end
+        local limit_dialog
+        local limits = { 50, 100, 200, 500 }
+        local buttons = {}
+        for idx, lim in ipairs(limits) do
+            local is_selected = (lim == cur_limit)
+            local prefix = is_selected and "● " or "○ "
+            local label = (lim == 50) and string.format(_("%d MB (Default - Safe for all devices)"), lim)
+                                      or string.format(_("%d MB"), lim)
+            table.insert(buttons, {
+                {
+                    text = prefix .. label,
+                    align = "left",
+                    callback = function()
+                        UIManager:close(limit_dialog)
+                        selectLimit(lim)
+                    end,
+                }
+            })
+        end
+        table.insert(buttons, {
+            {
+                text = _("Cancel"),
+                id = "cancel",
+                callback = function()
+                    UIManager:close(limit_dialog)
+                    UIManager:scheduleIn(0.05, function()
+                        this:showCacheManagementDialog()
+                    end)
+                end,
+            }
+        })
+        limit_dialog = ButtonDialog:new{
+            title = _("Audio Cache Limit"),
+            buttons = buttons,
+        }
+        UIManager:show(limit_dialog)
+    end
+
+    local buttons = {
+        {
+            {
+                text = string.format(_("1. Auto-clear Limit: %d MB"), cur_limit),
+                align = "left",
+                callback = function()
+                    UIManager:close(cache_dialog)
+                    UIManager:scheduleIn(0.05, openLimitChoiceDialog)
+                end,
+            },
+        },
+        {
+            {
+                text = string.format(_("2. Clear Audio Cache Now (%.1f MB)"), cache_mb),
+                align = "left",
+                callback = function()
+                    local freed = this:clearAllAudioCache()
+                    UIManager:close(cache_dialog)
+                    UIManager:show(InfoMessage:new{
+                        text = string.format(_("Cleared audio cache: freed %.1f MB"), freed),
+                        timeout = 2,
+                    })
+                    UIManager:scheduleIn(0.05, function()
+                        this:showCacheManagementDialog()
+                    end)
+                end,
+            },
+        },
+        {
+            {
+                text = _("Back to Settings"),
+                callback = function()
+                    UIManager:close(cache_dialog)
+                    UIManager:scheduleIn(0.05, function()
+                        this:showSettingsDialog()
+                    end)
+                end,
+            },
+        },
+    }
+
+    cache_dialog = ButtonDialog:new{
+        title = _("Audio Cache Management"),
+        buttons = buttons,
+    }
+    UIManager:show(cache_dialog)
+end
+
 --- Show main plugin settings dialog
 function KoreaderTTS:showSettingsDialog()
     local ok_l, log = pcall(require, "logger")
@@ -1079,7 +1273,7 @@ function KoreaderTTS:showSettingsDialog()
         }
 
         local buttons = {}
-        for _, opt in ipairs(format_options) do
+        for idx, opt in ipairs(format_options) do
             local is_selected = (opt.id == current_fmt)
             local prefix = is_selected and "● " or "○ "
             table.insert(buttons, {
@@ -1370,6 +1564,19 @@ function KoreaderTTS:showSettingsDialog()
         },
         {
             {
+                text = _("3. Audio Cache Management"),
+                align = "left",
+                callback = function()
+                    UIManager:close(this.settings_dialog)
+                    this.settings_dialog = nil
+                    UIManager:scheduleIn(0.05, function()
+                        this:showCacheManagementDialog()
+                    end)
+                end,
+            },
+        },
+        {
+            {
                 text = _("Reset to Defaults"),
                 callback = function()
                     this.settings:resetDefaults()
@@ -1401,7 +1608,7 @@ end
 
 --- Handle reader close / document close: ensure TTS stops cleanly
 function KoreaderTTS:onCloseDocument()
-    self:onStopTTS()
+    self:onStopTTS(true)
     if self.engine and self.engine.destroy then
         pcall(function() self.engine:destroy() end)
     elseif self.tts_service and self.tts_service.destroy then
@@ -1410,7 +1617,7 @@ function KoreaderTTS:onCloseDocument()
 end
 
 function KoreaderTTS:onCloseWidget()
-    self:onStopTTS()
+    self:onStopTTS(true)
     if self.engine and self.engine.destroy then
         pcall(function() self.engine:destroy() end)
     elseif self.tts_service and self.tts_service.destroy then
@@ -1427,7 +1634,7 @@ end
 
 --- Handle KOReader exit: stop all playback
 function KoreaderTTS:onExit()
-    self:onStopTTS()
+    self:onStopTTS(true)
     if self.engine and self.engine.destroy then
         pcall(function() self.engine:destroy() end)
     elseif self.tts_service and self.tts_service.destroy then
