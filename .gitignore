@@ -1,5 +1,7 @@
 # Ignore documentation, agent configurations and third-party references
-docs/
+docs/*
+!docs/screenshots/
+!docs/screenshots/*
 .agents/
 .agent/
 .claude/

@@ -45,7 +45,6 @@ run_test("SettingsManager: default schema and bounds clamping", function()
     assert(sm:get("voice") == "alloy")
     assert(sm:get("preload_count") == 1, "Default preload_count must be 1 (sequential single request)")
     assert(sm:get("min_chunk_chars") == 120, "Default min_chunk_chars must be 120 for natural grouping")
-    assert(sm:get("stitch_page_boundary") == true, "Default stitch_page_boundary must be true")
 
     sm:set("server_url", "http://192.168.1.50:8000")
     assert(sm:get("server_url") == "http://192.168.1.50:8000/v1/audio/speech", "Base URL must normalize to standard speech endpoint")

@@ -718,12 +718,7 @@ function TextChunker:extractPageChunks(document, page_num, ui)
     end
 
     -- 5. Cross-page sentence stitching (stitch incomplete last sentence with next page's head)
-    local do_stitch = true
-    if self.settings and self.settings:get("stitch_page_boundary") == false then
-        do_stitch = false
-    end
-
-    if do_stitch and #chunks > 0 and document then
+    if #chunks > 0 and document then
         local last_chunk = chunks[#chunks]
         if not hasSentenceTerminator(last_chunk.raw_text) then
             local next_raw_text, _ = self:extractRawPageText(document, page_num + 1, ui)

@@ -980,6 +980,48 @@ function KoreaderTTS:showSettingsDialog()
         input_dialog:onShowKeyboard()
     end
 
+    local function openApiKeyInput()
+        local input_dialog
+        input_dialog = InputDialog:new{
+            title = _("Khóa xác thực (API Key)"),
+            input = this.settings:get("api_key") or "",
+            input_hint = "sk-...",
+            description = _("Bắt buộc khi dùng OpenAI Cloud. Để trống nếu dùng server nội bộ."),
+            buttons = {
+                {
+                    {
+                        text = _("Hủy"),
+                        id = "cancel",
+                        callback = function()
+                            UIManager:close(input_dialog)
+                            UIManager:scheduleIn(0.05, function()
+                                if openServerAndVoiceDialog then openServerAndVoiceDialog() end
+                            end)
+                        end,
+                    },
+                    {
+                        text = _("Lưu"),
+                        is_enter_default = true,
+                        callback = function()
+                            local val = input_dialog:getInputText() or ""
+                            this.settings:set("api_key", val)
+                            this.settings:save()
+                            if this.engine and this.engine.updateConfig then
+                                this.engine:updateConfig({ api_key = val })
+                            end
+                            UIManager:close(input_dialog)
+                            UIManager:scheduleIn(0.05, function()
+                                if openServerAndVoiceDialog then openServerAndVoiceDialog() end
+                            end)
+                        end,
+                    },
+                },
+            },
+        }
+        UIManager:show(input_dialog)
+        input_dialog:onShowKeyboard()
+    end
+
     local function openVoiceInput()
         local input_dialog
         input_dialog = InputDialog:new{
@@ -1084,10 +1126,20 @@ function KoreaderTTS:showSettingsDialog()
     openServerAndVoiceDialog = function()
         local sv_dialog
         local current_server = this.settings:get("server_url") or ""
+        local current_api_key = this.settings:get("api_key") or ""
         local current_voice = this.settings:get("voice") or ""
         local current_speed = this.settings:get("speed") or 1.0
         local current_preload = this.settings:get("preload_count") or 1
         local current_format = this.settings:get("audio_format") or "wav"
+
+        local masked_key = _("(Tùy chọn - Chưa nhập)")
+        if current_api_key and current_api_key ~= "" then
+            if #current_api_key > 10 then
+                masked_key = current_api_key:sub(1, 4) .. "..." .. current_api_key:sub(-4)
+            else
+                masked_key = string.rep("*", #current_api_key)
+            end
+        end
 
         local sv_buttons = {
             {
@@ -1096,53 +1148,63 @@ function KoreaderTTS:showSettingsDialog()
                     align = "left",
                     callback = function()
                         UIManager:close(sv_dialog)
-                        UIManager:nextTick(openServerUrlInput)
+                        UIManager:scheduleIn(0.05, openServerUrlInput)
                     end,
                 },
             },
             {
                 {
-                    text = string.format(_("2. Giọng đọc mặc định: %s"), current_voice),
+                    text = string.format(_("2. Khóa xác thực (API Key): %s"), masked_key),
                     align = "left",
                     callback = function()
                         UIManager:close(sv_dialog)
-                        UIManager:nextTick(openVoiceInput)
+                        UIManager:scheduleIn(0.05, openApiKeyInput)
                     end,
                 },
             },
             {
                 {
-                    text = string.format(_("3. Tốc độ đọc: %.1fx"), current_speed),
+                    text = string.format(_("3. Giọng đọc mặc định: %s"), current_voice),
                     align = "left",
                     callback = function()
                         UIManager:close(sv_dialog)
-                        UIManager:nextTick(openSpeedInput)
+                        UIManager:scheduleIn(0.05, openVoiceInput)
                     end,
                 },
             },
             {
                 {
-                    text = string.format(_("4. Số câu tải trước: %d câu"), current_preload),
+                    text = string.format(_("4. Tốc độ đọc: %.1fx"), current_speed),
                     align = "left",
                     callback = function()
                         UIManager:close(sv_dialog)
-                        UIManager:nextTick(openPreloadCountDialog)
+                        UIManager:scheduleIn(0.05, openSpeedInput)
                     end,
                 },
             },
             {
                 {
-                    text = string.format(_("5. Định dạng âm thanh: %s"), (current_format or "wav"):upper()),
+                    text = string.format(_("5. Số câu tải trước: %d câu"), current_preload),
                     align = "left",
                     callback = function()
                         UIManager:close(sv_dialog)
-                        UIManager:nextTick(openAudioFormatDialog)
+                        UIManager:scheduleIn(0.05, openPreloadCountDialog)
                     end,
                 },
             },
             {
                 {
-                    text = _("6. Phát thử âm thanh"),
+                    text = string.format(_("6. Định dạng âm thanh: %s"), (current_format or "wav"):upper()),
+                    align = "left",
+                    callback = function()
+                        UIManager:close(sv_dialog)
+                        UIManager:scheduleIn(0.05, openAudioFormatDialog)
+                    end,
+                },
+            },
+            {
+                {
+                    text = _("7. Phát thử âm thanh"),
                     align = "left",
                     callback = function()
                         this:onTestSingleSentence()
@@ -1154,7 +1216,7 @@ function KoreaderTTS:showSettingsDialog()
                     text = _("Quay lại Cài đặt"),
                     callback = function()
                         UIManager:close(sv_dialog)
-                        UIManager:nextTick(function()
+                        UIManager:scheduleIn(0.05, function()
                             this:showSettingsDialog()
                         end)
                     end,
@@ -1282,9 +1344,15 @@ function KoreaderTTS:showSettingsDialog()
                 text = _("1. Cài đặt Máy chủ, Giọng đọc & Tốc độ"),
                 align = "left",
                 callback = function()
+                    local ok_l, log = pcall(require, "logger")
+                    if ok_l and log then log.warn("TTS: Item 1 clicked!") end
                     UIManager:close(this.settings_dialog)
-                    UIManager:nextTick(function()
-                        openServerAndVoiceDialog()
+                    this.settings_dialog = nil
+                    UIManager:scheduleIn(0.05, function()
+                        local ok_o, err_o = pcall(openServerAndVoiceDialog)
+                        if not ok_o and ok_l and log then
+                            log.warn("TTS: openServerAndVoiceDialog error: " .. tostring(err_o))
+                        end
                     end)
                 end,
             },
@@ -1295,26 +1363,9 @@ function KoreaderTTS:showSettingsDialog()
                 align = "left",
                 callback = function()
                     UIManager:close(this.settings_dialog)
-                    UIManager:nextTick(function()
-                        this:showWordMappingDialog()
-                    end)
-                end,
-            },
-        },
-        {
-            {
-                text = _("3. Ghép câu liền mạch khi qua trang") .. (this.settings:get("stitch_page_boundary") ~= false and "   ☑" or "   ☐"),
-                align = "left",
-                callback = function()
-                    local current = this.settings:get("stitch_page_boundary")
-                    if current == nil then current = true end
-                    local new_val = not current
-                    this.settings:set("stitch_page_boundary", new_val)
-                    this.settings:save()
-                    UIManager:close(this.settings_dialog)
                     this.settings_dialog = nil
                     UIManager:scheduleIn(0.05, function()
-                        this:showSettingsDialog()
+                        this:showWordMappingDialog()
                     end)
                 end,
             },

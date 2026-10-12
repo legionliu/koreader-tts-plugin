@@ -1,69 +1,97 @@
-# KOReader TTS Plugin (OpenAI-Compatible)
+# KOReader TTS Plugin
 
-A high-performance Text-to-Speech (TTS) plugin for [KOReader](https://github.com/koreader/koreader), powered by a native Rust engine (`libtts_core.so`) and designed primarily for **Android E-ink devices** (Onyx Boox, Meebook, Bigme) and Android phones/tablets. Compatible with any OpenAI-compatible TTS server (`POST /v1/audio/speech`).
-
-> **Platform Status**:
-> - **Android (arm64-v8a, armeabi-v7a)**: Fully supported and tested with native Rust core.
-> - **Linux / Kindle / Kobo / PocketBook**: Experimental / WIP (requires compiling native target or using Pure Lua fallback mode).
+High-performance Text-to-Speech (TTS) plugin for [KOReader](https://github.com/koreader/koreader), powered by a native Rust engine (`libtts_core.so`) and compatible with any OpenAI-compatible speech endpoint (`POST /v1/audio/speech`).
 
 ---
 
 ## Features
 
-- **High-Performance Native Core**: Offloads network I/O, audio decoding, and PCM streaming to background Rust threads via LuaJIT FFI, completely eliminating UI freezes and Android OS ANRs ("KOReader isn't responding").
-- **Document Engines**: Works with Crengine (EPUB, MOBI, FB2, TXT) and MuPDF (PDF).
-- **Text Processing**: 3-tier sentence chunking (dialogue preservation, anti-fragmentation, safety splitting) and custom pronunciation dictionary with in-app CRUD UI.
-- **True Zero-gap Playback**: Seamless audio sample chaining with cross-page preloading and automatic page turns.
-- **E-ink Native UI**: Bottom-anchored floating control bar, mini floating bubble mode, and real-time sentence highlighting using partial E-ink refresh (no full screen flashes).
-- **Session Hardening**: Sleep timer (15m/30m/45m/end of page), screen standby prevention, session resume by book MD5, and network failure resilience.
+- **Non-blocking Native Core**: Offloads network I/O, HTTP/2 connection pooling, and audio decoding (OPUS, MP3, FLAC, WAV) to background threads via LuaJIT FFI, completely eliminating UI lag.
+- **E-ink Sentence Highlighting**: Real-time 20% soft gray highlight matching KOReader's native text selection, using partial screen refresh.
+- **Cross-page Stitching**: Automatically joins sentences split across page boundaries for natural, continuous speech without mid-sentence cutoffs.
+- **Floating Controls**: Bottom-anchored control bar with live buffer status, speed cycling (0.5x–2.0x), and a minimizable floating bubble mode.
+- **Built-in Utilities**: In-app pronunciation dictionary (custom word replacements), sleep timer, and session resume.
 
 ---
 
-## Directory Structure
+## Technical Architecture
+
+The plugin splits work between a lightweight **UI layer (Lua)** and a high-performance **background engine (Rust)**:
 
 ```text
-koreader_tts/
-├── _meta.lua            # Plugin metadata entry point
-├── main.lua             # WidgetContainer entry point & menu integration
-│
-├── src/
-│   ├── ui/              # Presentation layer (player_widget, canvas_highlight)
-│   ├── service/         # Application service layer (reading_coordinator, document_chunker, etc.)
-│   ├── engine/          # Engine strategy abstraction (ITtsEngine, NativeEngine, FallbackEngine, EngineFactory)
-│   └── bridge/          # C-ABI FFI glue (ffi_signatures, ffi_loader, ffi_marshaler) & fallback drivers
-│
-├── libs/                # Precompiled Android native libraries (arm64-v8a, armeabi-v7a)
-├── rust_core/           # Native Rust engine source (tokio, symphonia, ringbuf)
-├── scripts/             # Build & packaging scripts
-├── Makefile             # Automated build, test, and packaging targets
-├── INSTALL.md           # Installation guide
-└── tests/               # Modular test suites (runnable via LuaJIT & cargo)
+┌──────────────────────┐         ┌──────────────────────┐         ┌──────────────────────┐
+│     KOReader UI      │ ──────▶ │   Playback Queue     │ ──────▶ │     E-ink Screen     │
+│  (Buttons & Player)  │         │ (Sentence Management)│         │ (Sentence Highlight) │
+└──────────────────────┘         └──────────┬───────────┘         └──────────────────────┘
+                                            │
+                                            │ LuaJIT FFI
+                                            ▼
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                              Rust Native Core (Background)                             │
+│                                                                                        │
+│   ┌────────────────────┐     ┌────────────────────┐     ┌──────────────────────────┐   │
+│   │   Network Engine   │ ──▶ │   Audio Decoder    │ ──▶ │       Audio Output       │   │
+│   │ (HTTP/2 & Preload) │     │ (OPUS / MP3 / WAV) │     │ (Speaker / Bluetooth BT) │   │
+│   └────────────────────┘     └────────────────────┘     └──────────────────────────┘   │
+│             │                                                                          │
+│             ▼                                                                          │
+│   ┌────────────────────┐                                                               │
+│   │ Disk/Memory Cache  │                                                               │
+│   │ (Instant Playback) │                                                               │
+│   └────────────────────┘                                                               │
+└────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
----
-
-## Quick Start (Android)
-
-1. Copy the packaged folder into your Android device:
-   ```bash
-   adb push dist/koreader_tts.koplugin /sdcard/koreader/plugins/
-   ```
-2. Restart KOReader, go to **Settings (Gear)** → **Plugin management**, and enable **koreader_tts**.
-3. Open a book, tap top menu → **Text-to-Speech (TTS)** → **Server settings**:
-   - **Server URL**: e.g. `https://api.openai.com/v1/audio/speech` (or self-hosted `http://<server-ip>:8000/v1/audio/speech`)
-   - **Voice**: e.g. `alloy`
-4. Tap **Start reading from here** or **Test single sentence**.
-
-See [INSTALL.md](INSTALL.md) for detailed platform notes and troubleshooting.
+- **Zero UI Freezes**: All network calls, audio decoding, and file caching run on background OS threads via Rust (`libtts_core.so`), keeping the KOReader interface 100% responsive.
+- **Smart Preloading**: Downloads upcoming sentences in the background so audio plays continuously from sentence to sentence without pauses.
+- **Audio Caching**: Audio clips are cached locally so repeating a sentence or re-reading a page plays instantly without network requests.
 
 ---
 
-## Testing
+## Installation
 
-Run all 30 Rust tests and 5 modular Lua test suites locally:
+Copy the `koreader_tts.koplugin` folder into your device's KOReader plugins directory:
+
+| Platform | Path |
+| :--- | :--- |
+| **Android** | `/sdcard/koreader/plugins/` |
+| **Kindle** | `/mnt/us/koreader/plugins/` |
+| **Kobo** | `/.kobo/koreader/plugins/` |
+| **Linux Desktop** | `~/.config/koreader/plugins/` |
+
+Restart KOReader, then go to **Settings (Gear)** ➔ **Plugin management** and enable **koreader_tts**.
+
+---
+
+## Configuration
+
+1. In KOReader, tap Top Menu ➔ **Text-to-Speech (TTS)** ➔ **Plugin settings**.
+2. Configure your speech server:
+   - **Server URL**: `https://api.openai.com/v1/audio/speech` (or self-hosted `http://<ip>:8000/v1/audio/speech`).
+   - **API Key**: Enter your OpenAI API key (`sk-...`), or leave blank for local servers without auth.
+   - **Voice**: e.g. `alloy`, `echo`, `nova`.
+3. Tap **Start reading from here** to start listening.
+
+---
+
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/playback.png" width="48%" alt="Reading & Highlighting">
+  <img src="docs/screenshots/settings.png" width="48%" alt="Settings Dialog">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/menu.png" width="48%" alt="Reader Menu">
+</p>
+
+---
+
+## Build & Test
 
 ```bash
-make test
+make test     # Run all Rust (30) and Lua (27) unit tests
+make package  # Package plugin into dist/koreader_tts.koplugin
 ```
 
 ---

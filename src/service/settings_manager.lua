@@ -28,7 +28,6 @@ local DEFAULT_SETTINGS = {
     max_chunk_chars     = 300,                         -- Maximum characters per chunk
     preload_count       = 1,                           -- Number of chunks to preload (1 = sequential low-stress)
     preload_cross_page  = true,                        -- Preload across pages
-    stitch_page_boundary= true,                        -- Stitch incomplete sentences across page boundaries
 
     -- 4. E-ink Experience
     highlight_mode      = "gray",                      -- "gray" | "underline" | "none"
