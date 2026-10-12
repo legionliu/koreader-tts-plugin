@@ -30,6 +30,8 @@ function TextChunker:new(options)
         or DEFAULT_MAX_CHARS
     instance.filter_footnotes = (opts.filter_footnotes ~= false)
     instance.custom_mappings = opts.custom_mappings or {}
+    instance.settings = opts.settings
+    instance._stitched_heads = {}
     return instance
 end
 
@@ -385,15 +387,31 @@ function TextChunker:extractRawPageText(document, page_num, ui)
         is_current_page = false
     end
 
-    -- 1. Crengine on-screen text extraction (visible page in both paging and rolling modes)
-    if is_current_page and type(document.getTextFromPositions) == "function" then
+    -- 1. Crengine on-screen text extraction (handles visible page and peeking next page via internal gotoPage)
+    if type(document.getTextFromPositions) == "function" then
         local ok_d, Device = pcall(require, "device")
         local Screen = (ok_d and Device and Device.screen) or (ui and ui.screen) or _G.Screen
         local sw = (Screen and type(Screen.getWidth) == "function" and Screen:getWidth())
             or (ui and ui.screen and ui.screen:getWidth()) or 1080
         local sh = (Screen and type(Screen.getHeight) == "function" and Screen:getHeight())
             or (ui and ui.screen and ui.screen:getHeight()) or 2400
-        local ok, res = pcall(document.getTextFromPositions, document, {x = 0, y = 0}, {x = sw, y = sh}, true)
+
+        local saved_page = nil
+        if not is_current_page and type(document.gotoPage) == "function" and type(document.getCurrentPage) == "function" then
+            saved_page = document:getCurrentPage()
+            pcall(document.gotoPage, document, page_num, true)
+        end
+
+        local ok, res = pcall(document.getTextFromPositions, document, {x = 0, y = 0}, {x = sw, y = sh}, false)
+
+        if saved_page then
+            pcall(document.gotoPage, document, saved_page, true)
+        end
+
+        if type(document.clearSelection) == "function" then
+            pcall(document.clearSelection, document)
+        end
+
         if ok and res then
             local t, b = extractTextAndBoxes(res)
             if t and #t > 0 then
@@ -482,8 +500,11 @@ function TextChunker:extractRawPageText(document, page_num, ui)
             local saved_pos = document:getCurrentPos()
             local next_pos = saved_pos + (page_num - cur) * sh
             document:gotoPos(next_pos)
-            local ok_res, res = pcall(document.getTextFromPositions, document, {x = 0, y = 0}, {x = sw, y = sh}, true)
+            local ok_res, res = pcall(document.getTextFromPositions, document, {x = 0, y = 0}, {x = sw, y = sh}, false)
             document:gotoPos(saved_pos)
+            if type(document.clearSelection) == "function" then
+                pcall(document.clearSelection, document)
+            end
             if ok_res and res then
                 return extractTextAndBoxes(res)
             end
@@ -577,6 +598,59 @@ local function mapSentenceToBBoxes(raw_sentence, full_text, word_boxes, search_o
     return matched_bboxes, (s_end or search_offset)
 end
 
+--- Checks if a text snippet ends with a sentence terminator (. ? ! : … " ”)
+local function hasSentenceTerminator(s)
+    if not s or s == "" then return true end
+    local trimmed = s:gsub("%s+$", "")
+    if #trimmed == 0 then return true end
+    local c1 = trimmed:sub(-1)
+    if c1 == "." or c1 == "?" or c1 == "!" or c1 == ":" or c1 == '"' or c1 == "'" then
+        return true
+    end
+    if #trimmed >= 3 then
+        local c3 = trimmed:sub(-3)
+        if c3 == "…" or c3 == "”" or c3 == "\226\128\157" or c3 == "\226\128\166" then
+            return true
+        end
+    end
+    return false
+end
+
+--- Extracts the head of a sentence (up to the first terminator) from the beginning of a page
+local function findSentenceHead(text)
+    if not text or text == "" then return "", "" end
+    local len = #text
+    local i = 1
+    while i <= len do
+        local c = text:sub(i, i)
+        local is_term = (c == "." or c == "?" or c == "!" or c == ":")
+        if not is_term and i + 2 <= len then
+            local c3 = text:sub(i, i + 2)
+            if c3 == "…" or c3 == "”" or c3 == "\226\128\157" or c3 == "\226\128\166" then
+                is_term = true
+                i = i + 2
+            end
+        end
+
+        if is_term then
+            local end_idx = i
+            while end_idx < len do
+                local peek = text:sub(end_idx + 1, end_idx + 1)
+                if peek == "." or peek == "?" or peek == "!" or peek == ":" or peek == '"' or peek == '”' or peek == "…" or peek == "\226\128\157" then
+                    end_idx = end_idx + 1
+                else
+                    break
+                end
+            end
+            local head = text:sub(1, end_idx):gsub("^%s+", ""):gsub("%s+$", "")
+            local remainder = text:sub(end_idx + 1):gsub("^%s+", "")
+            return head, remainder
+        end
+        i = i + 1
+    end
+    return text, ""
+end
+
 --- Extract and chunk full page content from document engine
 -- Returns array of Chunk tables with Bounding Boxes
 -- @param document KOReader self.ui.document
@@ -592,6 +666,18 @@ function TextChunker:extractPageChunks(document, page_num, ui)
     end
     if not raw_page_text or raw_page_text == "" then
         return {}
+    end
+
+    -- 0. Check if this page has a head that was already stitched into the previous page
+    self._stitched_heads = self._stitched_heads or {}
+    local head_to_strip = self._stitched_heads[page_num]
+    if head_to_strip and head_to_strip ~= "" then
+        self._stitched_heads[page_num] = nil
+        local esc = head_to_strip:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
+        local pat = "^%s*" .. esc .. "%s*"
+        if raw_page_text:match(pat) then
+            raw_page_text = raw_page_text:gsub(pat, "", 1)
+        end
     end
 
     -- 1. Sanitize text
@@ -628,6 +714,55 @@ function TextChunker:extractPageChunks(document, page_num, ui)
                 bboxes      = bboxes or {},   -- Highlighting bounding boxes
             })
             chunk_idx = chunk_idx + 1
+        end
+    end
+
+    -- 5. Cross-page sentence stitching (stitch incomplete last sentence with next page's head)
+    local do_stitch = true
+    if self.settings and self.settings:get("stitch_page_boundary") == false then
+        do_stitch = false
+    end
+
+    if do_stitch and #chunks > 0 and document then
+        local last_chunk = chunks[#chunks]
+        if not hasSentenceTerminator(last_chunk.raw_text) then
+            local next_raw_text, _ = self:extractRawPageText(document, page_num + 1, ui)
+            if next_raw_text and #next_raw_text > 0 then
+                local cleaned_next = self:sanitize(next_raw_text)
+                local head, _ = findSentenceHead(cleaned_next)
+                local ok_l, logger = pcall(require, "logger")
+                if ok_l and logger and logger.warn then
+                    logger.warn(string.format("[TTS STITCH DEBUG] page=%d, last_raw='%s', next_raw='%s', head='%s'",
+                        page_num, tostring(last_chunk.raw_text), tostring(cleaned_next:sub(1, 60)), tostring(head)))
+                end
+                if head and #head > 0 and #head < 250 then
+                    local is_hyphen = last_chunk.raw_text:match("%-%s*$")
+                    local stitched_raw
+                    if is_hyphen then
+                        stitched_raw = last_chunk.raw_text:gsub("%-%s*$", "") .. head
+                    else
+                        -- Prevent word duplication if Crengine repeats the boundary word on page N+1
+                        local last_w = last_chunk.raw_text:match("(%S+)%s*$")
+                        local first_w = head:match("^%s*(%S+)")
+                        if last_w and first_w and last_w:lower() == first_w:lower() then
+                            head = head:gsub("^%s*" .. first_w:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1") .. "%s*", "")
+                        end
+                        stitched_raw = last_chunk.raw_text .. " " .. head
+                    end
+
+                    local tts_text = self:normalizePronunciation(stitched_raw)
+                    local trimmed = tts_text:gsub("^%s+", ""):gsub("%s+$", "")
+
+                    last_chunk.raw_text = stitched_raw
+                    last_chunk.text = trimmed
+                    last_chunk.char_count = #trimmed
+                    last_chunk.stitched = true
+                    last_chunk.stitched_next_page = page_num + 1
+                    last_chunk.stitched_head = head
+
+                    self._stitched_heads[page_num + 1] = head
+                end
+            end
         end
     end
 

@@ -45,6 +45,7 @@ run_test("SettingsManager: default schema and bounds clamping", function()
     assert(sm:get("voice") == "alloy")
     assert(sm:get("preload_count") == 1, "Default preload_count must be 1 (sequential single request)")
     assert(sm:get("min_chunk_chars") == 120, "Default min_chunk_chars must be 120 for natural grouping")
+    assert(sm:get("stitch_page_boundary") == true, "Default stitch_page_boundary must be true")
 
     sm:set("server_url", "http://192.168.1.50:8000")
     assert(sm:get("server_url") == "http://192.168.1.50:8000/v1/audio/speech", "Base URL must normalize to standard speech endpoint")
@@ -152,6 +153,38 @@ run_test("DocumentChunker: extraction with bounding boxes from mock doc", functi
     local chunks = chunker:extractPageChunks(mock_doc, 1, nil)
     assert(#chunks > 0, "Must extract chunks from document")
     assert(chunks[1].bboxes ~= nil, "Chunks must contain bounding boxes for highlight")
+end)
+
+run_test("DocumentChunker: cross-page sentence stitching across boundary", function()
+    local page1_text = "Chính bà Trùm mở cửa đón nàng, ôm nàng trong vòng tay ấm áp, rồi bà ngắm nghía Kay, thành"
+    local page2_text = "thật nói:\n– Cháu đẹp thật. Con trai bác ngu ngốc quá."
+
+    local cur_page = 1
+    local mock_doc = {
+        getCurrentPage = function() return cur_page end,
+        gotoPage = function(self, p, internal) cur_page = p end,
+        getTextFromPositions = function(self, p0, p1, draw)
+            local t = (cur_page == 1) and page1_text or page2_text
+            return { text = t, pos0 = { x = 0, y = 0 }, pos1 = { x = 100, y = 100 } }
+        end,
+        getPageText = function(self, page_no)
+            if page_no == 1 then return page1_text end
+            if page_no == 2 then return page2_text end
+            return ""
+        end,
+    }
+
+    local chunker = DocumentChunker:new()
+    local chunks_p1 = chunker:extractPageChunks(mock_doc, 1, nil)
+    assert(#chunks_p1 > 0, "Must extract chunks from Page 1")
+    local last_c = chunks_p1[#chunks_p1]
+    assert(last_c.stitched == true, "Last chunk on Page 1 must be stitched across boundary")
+    assert(last_c.text:find("thành thật nói:"), "Last chunk must stitch 'thật nói:' from Page 2")
+
+    local chunks_p2 = chunker:extractPageChunks(mock_doc, 2, nil)
+    assert(#chunks_p2 > 0, "Must extract chunks from Page 2")
+    assert(not chunks_p2[1].text:find("^thật nói:"), "Page 2 must not duplicate the stitched head")
+    assert(chunks_p2[1].text:find("Cháu đẹp thật"), "Page 2 must start from the remaining sentence")
 end)
 
 -- 3. SleepTimer Tests

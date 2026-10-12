@@ -76,6 +76,7 @@ function KoreaderTTS:init()
         max_chars = self.settings:get("max_chunk_chars") or 300,
         filter_footnotes = self.settings:get("filter_footnotes"),
         custom_mappings = self.settings:getCustomMappings(),
+        settings = self.settings,
     }
     self.chunker = chunker
 
@@ -576,13 +577,17 @@ function KoreaderTTS:onStartTTS()
         max_chars = self.settings:get("max_chunk_chars") or 300,
         filter_footnotes = self.settings:get("filter_footnotes"),
         custom_mappings = self.settings:getCustomMappings(),
+        settings = self.settings,
     }
     self.chunker = chunker
 
     local chunks = chunker:extractPageChunks(document, current_page, self.ui)
     if ok_log and logger and logger.warn then
-        logger.warn(string.format("[TTS DEBUG] onStartTTS: page=%s, chunks_count=%d, first_chunk='%s'",
-            tostring(current_page), #chunks, tostring(chunks[1] and chunks[1].text)))
+        logger.warn(string.format("[TTS DEBUG] onStartTTS: page=%s, chunks_count=%d", tostring(current_page), #chunks))
+        for i, c in ipairs(chunks) do
+            logger.warn(string.format("[TTS DEBUG] Chunk %d/%d (stitched=%s): '%s'",
+                i, #chunks, tostring(c.stitched), tostring(c.text)))
+        end
     end
 
     -- If current page is empty (e.g. cover/title/illustration page), scan ahead up to 10 pages
@@ -1292,6 +1297,24 @@ function KoreaderTTS:showSettingsDialog()
                     UIManager:close(this.settings_dialog)
                     UIManager:nextTick(function()
                         this:showWordMappingDialog()
+                    end)
+                end,
+            },
+        },
+        {
+            {
+                text = _("3. Ghép câu liền mạch khi qua trang") .. (this.settings:get("stitch_page_boundary") ~= false and "   ☑" or "   ☐"),
+                align = "left",
+                callback = function()
+                    local current = this.settings:get("stitch_page_boundary")
+                    if current == nil then current = true end
+                    local new_val = not current
+                    this.settings:set("stitch_page_boundary", new_val)
+                    this.settings:save()
+                    UIManager:close(this.settings_dialog)
+                    this.settings_dialog = nil
+                    UIManager:scheduleIn(0.05, function()
+                        this:showSettingsDialog()
                     end)
                 end,
             },
