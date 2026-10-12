@@ -38,15 +38,17 @@ test-rust:
 
 test-lua:
 	@echo "=== [2/2] Running Lua Unit & Acceptance Test Suites ==="
-	@echo "-> [1/5] Running Bridge tests..."
+	@echo "-> [1/6] Running Localization (i18n) tests..."
+	@luajit tests/test_i18n.lua || exit 1
+	@echo "-> [2/6] Running Bridge tests..."
 	@luajit tests/test_bridge.lua || exit 1
-	@echo "-> [2/5] Running Engine Strategy tests..."
+	@echo "-> [3/6] Running Engine Strategy tests..."
 	@luajit tests/test_engine.lua || exit 1
-	@echo "-> [3/5] Running Application Service tests..."
+	@echo "-> [4/6] Running Application Service tests..."
 	@luajit tests/test_service.lua || exit 1
-	@echo "-> [4/5] Running Presentation UI tests..."
+	@echo "-> [5/6] Running Presentation UI tests..."
 	@luajit tests/test_ui.lua || exit 1
-	@echo "-> [5/5] Running End-to-End Acceptance tests..."
+	@echo "-> [6/6] Running End-to-End Acceptance tests..."
 	@luajit tests/test_acceptance.lua || exit 1
 	@echo "=== ALL LUA TESTS PASSED 100% ==="
 

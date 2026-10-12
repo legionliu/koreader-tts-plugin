@@ -52,12 +52,11 @@ The plugin splits work between a lightweight **UI layer (Lua)** and a high-perfo
 
 Copy the `koreader_tts.koplugin` folder into your device's KOReader plugins directory:
 
-| Platform | Path |
-| :--- | :--- |
-| **Android** | `/sdcard/koreader/plugins/` |
-| **Kindle** | `/mnt/us/koreader/plugins/` |
-| **Kobo** | `/.kobo/koreader/plugins/` |
-| **Linux Desktop** | `~/.config/koreader/plugins/` |
+| Platform | Path | Device Verification Status |
+| :--- | :--- | :--- |
+| **Android (E-ink & Mobile)** | `/sdcard/koreader/plugins/` | **Verified on real hardware**: Onyx Boox Palma (Android 11, `arm64-v8a`) & Android emulator (`x86`/`arm64`) |
+| **Kindle / Kobo** | `/mnt/us/` or `/.kobo/` | *Untested on physical hardware* (requires musl/armhf cross-compilation) |
+| **Linux Desktop** | `~/.config/koreader/plugins/` | Verified for automated unit & acceptance testing only |
 
 Restart KOReader, then go to **Settings (Gear)** ➔ **Plugin management** and enable **koreader_tts**.
 

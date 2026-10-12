@@ -20,6 +20,11 @@ if not ok_uimanager or not UIManager then
     }
 end
 
+local ok_i18n, _ = pcall(require, "src.util.i18n")
+if not ok_i18n or type(_) ~= "function" then
+    _ = function(msg) return msg end
+end
+
 local ReadingCoordinator = {}
 ReadingCoordinator.__index = ReadingCoordinator
 local PlaybackQueue = ReadingCoordinator
@@ -406,7 +411,7 @@ function PlaybackQueue:_onPollTick()
             if this.state == PlaybackQueue.STATE_PREFETCHING then
                 this:_setState(PlaybackQueue.STATE_PAUSED)
                 if this.on_error then
-                    pcall(this.on_error, ev.error_message or "Lỗi tải âm thanh từ máy chủ")
+                    pcall(this.on_error, ev.error_message or _("Error downloading audio from server"))
                 end
             end
         end

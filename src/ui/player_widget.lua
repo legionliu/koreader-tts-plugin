@@ -103,9 +103,14 @@ if not ok_size or not Size then
     }
 end
 
-local ok_gettext, _ = pcall(require, "gettext")
-if not ok_gettext or type(_) ~= "function" then
-    _ = function(msg) return msg end
+local ok_i18n, _ = pcall(require, "src.util.i18n")
+if not ok_i18n or type(_) ~= "function" then
+    local ok_gettext, gt = pcall(require, "gettext")
+    if ok_gettext and type(gt) == "function" then
+        _ = gt
+    else
+        _ = function(msg) return msg end
+    end
 end
 
 local ok_font, Font = pcall(require, "ui/font")
@@ -174,7 +179,7 @@ function PlayerWidget:new(opts)
             local ok_info, InfoMessage = pcall(require, "ui/widget/infomessage")
             if ok_info and InfoMessage then
                 UIManager:show(InfoMessage:new{
-                    text = _("Đã dừng đọc theo hẹn giờ."),
+                    text = _("Stopped reading by sleep timer."),
                     timeout = 3,
                 })
             end
@@ -243,13 +248,13 @@ function UIPlayer:showControlBar()
 
     -- 1. Row 1: Header (Progress title, Buffer status, [—], [✕])
     self.title_widget = TextWidget:new{
-        text = string.format(_("Trang %d · Câu %d/%d"), self.current_page, self.current_index, self.total_on_page),
+        text = string.format(_("Page %d · %d/%d"), self.current_page, self.current_index, self.total_on_page),
         face = Font:getFace("cfont", 16),
         bold = true,
     }
 
     self.buffer_status_widget = TextWidget:new{
-        text = _("Đệm: ●● (2 câu)"),
+        text = _("Buffer: ●●"),
         face = Font:getFace("cfont", 13),
     }
 
@@ -347,7 +352,7 @@ function UIPlayer:showControlBar()
 
     local cur_speed = self.audio_backend and self.audio_backend.speed or 1.0
     self.speed_btn = Button:new{
-        text = string.format(_("Tốc độ: %.1fx"), cur_speed),
+        text = string.format(_("Speed: %.1fx"), cur_speed),
         bordersize = Size.border.thin or 1,
         padding = 6,
         callback = function()
@@ -356,7 +361,7 @@ function UIPlayer:showControlBar()
     }
 
     self.sleep_timer_btn = Button:new{
-        text = self.sleep_timer and self.sleep_timer:getDisplayText() or _("Hẹn giờ: Tắt"),
+        text = self.sleep_timer and self.sleep_timer:getDisplayText() or _("Sleep timer: Off"),
         bordersize = Size.border.thin or 1,
         padding = 6,
         callback = function()
@@ -719,7 +724,7 @@ function UIPlayer:_updateBufferStatus()
         local sec = self.tts_client.last_latency_ms / 1000
         status_suffix = string.format(" (%.1fs)", sec)
     end
-    local status_text = string.format(_("Đệm: %s%s"), dots, status_suffix)
+    local status_text = string.format(_("Buffer: %s%s"), dots, status_suffix)
 
     if self.buffer_status_widget.setText then
         self.buffer_status_widget:setText(status_text)
@@ -734,7 +739,7 @@ function UIPlayer:onChunkChange(chunk, page, index, total)
     self.total_on_page = total or self.total_on_page
 
     -- 1. Update progress labels
-    local progress_str = string.format(_("Trang %d · Câu %d/%d"), page, index, total)
+    local progress_str = string.format(_("Page %d · %d/%d"), page, index, total)
     if self.title_widget and self.title_widget.setText then
         self.title_widget:setText(progress_str)
     end
@@ -872,13 +877,13 @@ function UIPlayer:showSpeedDialog()
     local input_dialog
 
     input_dialog = InputDialog:new{
-        title = _("Tốc độ đọc (0.5x - 2.0x)"),
+        title = _("Reading Speed (0.5x - 2.0x)"),
         input = tostring(cur_speed),
         input_hint = "1.0",
         buttons = {
             {
                 {
-                    text = _("Hủy"),
+                    text = _("Cancel"),
                     id = "cancel",
                     callback = function()
                         UIManager:close(input_dialog)
@@ -888,7 +893,7 @@ function UIPlayer:showSpeedDialog()
                     end,
                 },
                 {
-                    text = _("Lưu"),
+                    text = _("Save"),
                     is_enter_default = true,
                     callback = function()
                         local val = tonumber(input_dialog:getInputText())
@@ -902,7 +907,7 @@ function UIPlayer:showSpeedDialog()
                                 this.settings:save()
                             end
                             if this.speed_btn and this.speed_btn.setText then
-                                this.speed_btn:setText(string.format(_("Tốc độ: %.1fx"), val))
+                                this.speed_btn:setText(string.format(_("Speed: %.1fx"), val))
                             end
                             if this.mini_label_btn and this.mini_label_btn.setText then
                                 this.mini_label_btn:setText(string.format("%d/%d · %.1fx", this.current_index, this.total_on_page, val))
@@ -947,7 +952,7 @@ function UIPlayer:onCycleSpeed()
     end
 
     if self.speed_btn and self.speed_btn.setText then
-        self.speed_btn:setText(string.format(_("Tốc độ: %.1fx"), next_speed))
+        self.speed_btn:setText(string.format(_("Speed: %.1fx"), next_speed))
     end
     if self.mini_label_btn and self.mini_label_btn.setText then
         self.mini_label_btn:setText(string.format("%d/%d · %.1fx", self.current_index, self.total_on_page, next_speed))
@@ -981,42 +986,42 @@ function UIPlayer:showSleepTimerDialog()
     local buttons = {
         {
             {
-                text = _("Tắt hẹn giờ") .. (cur_mode == "0" and "  ✔" or ""),
+                text = _("Turn off timer") .. (cur_mode == "0" and "  ✔" or ""),
                 align = "left",
                 callback = function() selectTimer("0") end,
             },
         },
         {
             {
-                text = _("15 phút") .. (cur_mode == "15" and "  ✔" or ""),
+                text = _("15 minutes") .. (cur_mode == "15" and "  ✔" or ""),
                 align = "left",
                 callback = function() selectTimer("15") end,
             },
         },
         {
             {
-                text = _("30 phút") .. (cur_mode == "30" and "  ✔" or ""),
+                text = _("30 minutes") .. (cur_mode == "30" and "  ✔" or ""),
                 align = "left",
                 callback = function() selectTimer("30") end,
             },
         },
         {
             {
-                text = _("45 phút") .. (cur_mode == "45" and "  ✔" or ""),
+                text = _("45 minutes") .. (cur_mode == "45" and "  ✔" or ""),
                 align = "left",
                 callback = function() selectTimer("45") end,
             },
         },
         {
             {
-                text = _("Khi đọc hết trang hiện tại") .. (cur_mode == "page" and "  ✔" or ""),
+                text = _("When current page finishes") .. (cur_mode == "page" and "  ✔" or ""),
                 align = "left",
                 callback = function() selectTimer("page") end,
             },
         },
         {
             {
-                text = _("Đóng"),
+                text = _("Close"),
                 callback = function()
                     if dialog then
                         UIManager:close(dialog)
@@ -1030,7 +1035,7 @@ function UIPlayer:showSleepTimerDialog()
     }
 
     dialog = ButtonDialog:new{
-        title = _("Hẹn giờ tắt đọc"),
+        title = _("Sleep Timer"),
         buttons = buttons,
     }
     UIManager:show(dialog)

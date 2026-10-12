@@ -26,11 +26,8 @@ local EngineFactory = require("src.engine.engine_factory")
 local AudioBackend = require("src.bridge.fallback.audio_backend")
 local PlaybackQueue = require("src.service.reading_coordinator")
 local UIPlayer = require("src.ui.player_widget")
-
-local ok_gettext, _ = pcall(require, "gettext")
-if not ok_gettext or type(_) ~= "function" then
-    _ = function(msg) return msg end
-end
+local i18n = require("src.util.i18n")
+local _ = i18n
 
 local KoreaderTTS = WidgetContainer:extend{
     name = "koreader_tts",
@@ -44,6 +41,7 @@ function KoreaderTTS:init()
         logger.warn("KoreaderTTS:init() called! ui=", tostring(self.ui))
     end
     self.settings = Settings:new()
+    i18n.init(self.settings)
     local cache_dir = "cache/tts"
     local ok_ds, DataStorage = pcall(require, "datastorage")
     if ok_ds and DataStorage and type(DataStorage.getDataDir) == "function" then
@@ -111,7 +109,7 @@ function KoreaderTTS:init()
                 this.ui_player:onPageTurn(new_page)
             end
             UIManager:show(InfoMessage:new{
-                text = string.format(_("Tự động lật sang trang %d"), new_page),
+                text = string.format(_("Auto page turn to page %d"), new_page),
                 timeout = 1,
             })
         end,
@@ -120,7 +118,7 @@ function KoreaderTTS:init()
                 this.ui_player:onFinished()
             end
             UIManager:show(InfoMessage:new{
-                text = _("Đã đọc xong toàn bộ văn bản."),
+                text = _("Finished reading entire text."),
                 timeout = 3,
             })
         end,
@@ -129,7 +127,7 @@ function KoreaderTTS:init()
                 this.ui_player:onError(err)
             end
             UIManager:show(InfoMessage:new{
-                text = string.format(_("Lỗi phát âm thanh:\n%s"), tostring(err)),
+                text = string.format(_("Audio playback error:\n%s"), tostring(err)),
                 timeout = 4,
             })
         end,
@@ -152,7 +150,7 @@ function KoreaderTTS:init()
     if self.ui and self.ui.dictionary and type(self.ui.dictionary.addToDictButtons) == "function" then
         self.ui.dictionary:addToDictButtons({
             id = "koreader_tts_read",
-            text = _("▶ Đọc từ đây"),
+            text = _("▶ Read from here"),
             font_bold = true,
             callback = function(dict_popup)
                 if dict_popup then UIManager:close(dict_popup) end
@@ -170,7 +168,7 @@ function KoreaderTTS:onDictButtonsReady(dict_popup, buttons)
     local this = self
     table.insert(buttons, {{
         id = "koreader_tts_read",
-        text = _("▶ Đọc từ đây"),
+        text = _("▶ Read from here"),
         callback = function()
             UIManager:close(dict_popup)
             UIManager:scheduleIn(0.2, function()
@@ -201,7 +199,7 @@ function KoreaderTTS:addToMainMenu(menu_items)
     local this = self
     local sub_items = {
         {
-            text = _("▶ Đọc từ đầu trang này"),
+            text = _("▶ Read from page start"),
             callback = function(touchmenu_instance)
                 if touchmenu_instance then touchmenu_instance:closeMenu() end
                 this:onStartTTS()
@@ -217,7 +215,7 @@ function KoreaderTTS:addToMainMenu(menu_items)
 
     if cur_book_id and last_book_id and cur_book_id == last_book_id and (last_page > 1 or last_chunk > 1) then
         table.insert(sub_items, {
-            text = string.format(_("⏯ Đọc tiếp tục phiên trước (Trang %d · Câu %d)"), last_page, last_chunk),
+            text = string.format(_("⏯ Resume previous session (Page %d · %d)"), last_page, last_chunk),
             callback = function(touchmenu_instance)
                 if touchmenu_instance then touchmenu_instance:closeMenu() end
                 this:onResumePreviousSession()
@@ -226,7 +224,7 @@ function KoreaderTTS:addToMainMenu(menu_items)
     end
 
     table.insert(sub_items, {
-        text = _("⏲ Hẹn giờ tắt đọc"),
+        text = _("⏲ Sleep timer"),
         callback = function(touchmenu_instance)
             if touchmenu_instance then
                 touchmenu_instance:closeMenu()
@@ -239,10 +237,10 @@ function KoreaderTTS:addToMainMenu(menu_items)
         end,
     })
     table.insert(sub_items, {
-        text = _("⚙ Cài đặt tiện ích"),
+        text = _("⚙ Plugin settings"),
         callback = function(touchmenu_instance)
             local ok_l, log = pcall(require, "logger")
-            if ok_l and log then log.warn("TTS: Cài đặt tiện ích callback invoked!") end
+            if ok_l and log then log.warn("TTS: Plugin settings callback invoked!") end
             if touchmenu_instance then
                 touchmenu_instance:closeMenu()
                 UIManager:scheduleIn(0.1, function()
@@ -255,7 +253,7 @@ function KoreaderTTS:addToMainMenu(menu_items)
     })
 
     menu_items.koreader_tts = {
-        text = _("Đọc bằng giọng nói"),
+        text = _("Text-to-Speech (TTS)"),
         sorting_hint = "tools",
         sub_item_table = sub_items,
     }
@@ -398,7 +396,7 @@ function KoreaderTTS:showSleepTimerDialog()
             pcall(UIManager.setDirty, UIManager, nil, "ui")
         end
         UIManager:show(InfoMessage:new{
-            text = string.format(_("Đã cài đặt hẹn giờ: %s"), label),
+            text = string.format(_("Sleep timer set: %s"), label),
             timeout = 2,
         })
     end
@@ -406,49 +404,49 @@ function KoreaderTTS:showSleepTimerDialog()
     local buttons = {
         {
             {
-                text = _("Tắt hẹn giờ") .. (cur_mode == "0" and "  ✔" or ""),
+                text = _("Turn off timer") .. (cur_mode == "0" and "  ✔" or ""),
                 align = "left",
-                callback = function() selectTimer("0", _("Tắt")) end,
+                callback = function() selectTimer("0", _("Off")) end,
             },
         },
         {
             {
-                text = _("15 phút") .. (cur_mode == "15" and "  ✔" or ""),
+                text = _("15 minutes") .. (cur_mode == "15" and "  ✔" or ""),
                 align = "left",
-                callback = function() selectTimer("15", _("15 phút")) end,
+                callback = function() selectTimer("15", _("15 minutes")) end,
             },
         },
         {
             {
-                text = _("30 phút") .. (cur_mode == "30" and "  ✔" or ""),
+                text = _("30 minutes") .. (cur_mode == "30" and "  ✔" or ""),
                 align = "left",
-                callback = function() selectTimer("30", _("30 phút")) end,
+                callback = function() selectTimer("30", _("30 minutes")) end,
             },
         },
         {
             {
-                text = _("45 phút") .. (cur_mode == "45" and "  ✔" or ""),
+                text = _("45 minutes") .. (cur_mode == "45" and "  ✔" or ""),
                 align = "left",
-                callback = function() selectTimer("45", _("45 phút")) end,
+                callback = function() selectTimer("45", _("45 minutes")) end,
             },
         },
         {
             {
-                text = _("Khi đọc hết trang hiện tại") .. (cur_mode == "page" and "  ✔" or ""),
+                text = _("When current page finishes") .. (cur_mode == "page" and "  ✔" or ""),
                 align = "left",
-                callback = function() selectTimer("page", _("Hết trang")) end,
+                callback = function() selectTimer("page", _("Page end")) end,
             },
         },
         {
             {
-                text = _("Đóng"),
+                text = _("Close"),
                 callback = function() UIManager:close(dialog) end,
             },
         },
     }
 
     dialog = ButtonDialog:new{
-        title = _("Hẹn giờ tắt đọc"),
+        title = _("Sleep Timer"),
         buttons = buttons,
     }
     UIManager:show(dialog)
@@ -466,7 +464,7 @@ function KoreaderTTS:onStopTTS()
         pcall(self.engine.client.clearCache, self.engine.client, 86400)
     end
     UIManager:show(InfoMessage:new{
-        text = _("Đã dừng đọc."),
+        text = _("Stopped reading."),
         timeout = 2,
     })
 end
@@ -510,7 +508,7 @@ function KoreaderTTS:onTestSingleSentence()
         test_text = chunks[1].text
     else
         -- Fallback default test sentence when no book is open or book starts with blank/cover pages
-        test_text = _("Chào mừng bạn đến với KOReader. Đây là câu thử nghiệm kết nối máy chủ và kiểm tra âm thanh.")
+        test_text = _("Welcome to KOReader. This is a test sentence to check server connection and audio playback.")
     end
 
     -- Pause active reading queue if playing
@@ -519,7 +517,7 @@ function KoreaderTTS:onTestSingleSentence()
     end
 
     UIManager:show(InfoMessage:new{
-        text = string.format(_("Đang tải âm thanh thử nghiệm...\n'%s'"), test_text),
+        text = string.format(_("Downloading test audio...\n'%s'"), test_text),
         timeout = 2,
     })
 
@@ -529,7 +527,7 @@ function KoreaderTTS:onTestSingleSentence()
     self.engine:synthesizeSingle(test_text, function(success, result_or_err)
         if not success then
             UIManager:show(InfoMessage:new{
-                text = string.format(_("Lỗi tải âm thanh từ máy chủ:\n%s"), tostring(result_or_err)),
+                text = string.format(_("Server audio download error:\n%s"), tostring(result_or_err)),
                 timeout = 5,
             })
             return
@@ -539,7 +537,7 @@ function KoreaderTTS:onTestSingleSentence()
         this.audio_backend:play(wav_path, function(finished)
             if finished then
                 UIManager:show(InfoMessage:new{
-                    text = _("Đã phát xong câu thử nghiệm!"),
+                    text = _("Test audio playback finished!"),
                     timeout = 2,
                 })
             end
@@ -547,7 +545,7 @@ function KoreaderTTS:onTestSingleSentence()
 
         local driver = this.audio_backend._active_process or this.audio_backend.driver_name or "timer"
         UIManager:show(InfoMessage:new{
-            text = string.format(_("Đang phát câu thử nghiệm... [%s]\n'%s'"), tostring(driver), test_text),
+            text = string.format(_("Playing test audio... [%s]\n'%s'"), tostring(driver), test_text),
             timeout = 3,
         })
     end)
@@ -626,9 +624,9 @@ function KoreaderTTS:onStartTTS()
         end
     end
 
-    local preview = (chunk_count > 0) and chunks[1].text or _("(Trang trống hoặc không có chữ)")
+    local preview = (chunk_count > 0) and chunks[1].text or _("(Empty page or no text)")
     local msg = string.format(
-        _("Đọc giọng nói:\nTrang: %d | Tổng số câu: %d\nCâu 1: %s"),
+        _("Text-to-Speech:\nPage: %d | Total sentences: %d\nSentence 1: %s"),
         current_page, chunk_count, preview
     )
     UIManager:show(InfoMessage:new{
@@ -654,7 +652,7 @@ end
 function KoreaderTTS:addToHighlightMenu(menu_items, selected_text)
     if type(menu_items) == "table" and selected_text and selected_text ~= "" then
         table.insert(menu_items, {
-            text = _("🔊 Đọc bằng giọng nói"),
+            text = _("🔊 Read with Text-to-Speech"),
             callback = function()
                 self:onReadSelectedText(selected_text)
             end,
@@ -678,7 +676,7 @@ function KoreaderTTS:onReadSelectedText(selected_text)
     end
 
     UIManager:show(InfoMessage:new{
-        text = string.format(_("Đang tải đoạn chọn:\n'%s'"), cleaned:sub(1, 60) .. "..."),
+        text = string.format(_("Downloading selected text:\n'%s'"), cleaned:sub(1, 60) .. "..."),
         timeout = 2,
     })
 
@@ -686,21 +684,21 @@ function KoreaderTTS:onReadSelectedText(selected_text)
     self.engine:synthesizeSingle(cleaned, function(success, result_or_err)
         if not success then
             UIManager:show(InfoMessage:new{
-                text = string.format(_("Lỗi tải âm thanh đoạn chọn:\n%s"), tostring(result_or_err)),
+                text = string.format(_("Selected text download error:\n%s"), tostring(result_or_err)),
                 timeout = 4,
             })
             return
         end
 
         UIManager:show(InfoMessage:new{
-            text = _("Đang phát đoạn chọn..."),
+            text = _("Playing selected text..."),
             timeout = 1,
         })
 
         this.audio_backend:play(result_or_err, function(finished)
             if finished then
                 UIManager:show(InfoMessage:new{
-                    text = _("Đã đọc xong đoạn văn bản được chọn!"),
+                    text = _("Finished reading selected text!"),
                     timeout = 2,
                 })
             end
@@ -717,19 +715,19 @@ function KoreaderTTS:showWordMappingDialog()
     local function openAddWordDialog()
         local word_dialog
         word_dialog = InputDialog:new{
-            title = _("Nhập từ gốc (viết tắt / từ khó)"),
-            hint = "AI, TP.HCM, CNTT...",
+            title = _("Enter original word (abbreviation / difficult word)"),
+            hint = "AI, NASA, PhD...",
             buttons = {
                 {
                     {
-                        text = _("Hủy"),
+                        text = _("Cancel"),
                         callback = function()
                             UIManager:close(word_dialog)
                             this:showWordMappingDialog()
                         end,
                     },
                     {
-                        text = _("Tiếp tục"),
+                        text = _("Next"),
                         is_enter_default = true,
                         callback = function()
                             local orig_word = word_dialog:getInputText()
@@ -738,19 +736,19 @@ function KoreaderTTS:showWordMappingDialog()
                                 -- Open replacement input dialog
                                 local repl_dialog
                                 repl_dialog = InputDialog:new{
-                                    title = string.format(_("Từ đọc thay thế cho '%s'"), orig_word),
-                                    hint = _("Ví dụ: Trí tuệ nhân tạo"),
+                                    title = string.format(_("Spoken replacement for '%s'"), orig_word),
+                                    hint = _("Example: Artificial Intelligence"),
                                     buttons = {
                                         {
                                             {
-                                                text = _("Hủy"),
+                                                text = _("Cancel"),
                                                 callback = function()
                                                     UIManager:close(repl_dialog)
                                                     this:showWordMappingDialog()
                                                 end,
                                             },
                                             {
-                                                text = _("Lưu"),
+                                                text = _("Save"),
                                                 is_enter_default = true,
                                                 callback = function()
                                                     local repl_word = repl_dialog:getInputText()
@@ -759,7 +757,7 @@ function KoreaderTTS:showWordMappingDialog()
                                                         this.settings:setWordMapping(orig_word, repl_word)
                                                         this.settings:save()
                                                         UIManager:show(InfoMessage:new{
-                                                            text = string.format(_("Đã thêm: %s ➔ %s"), orig_word, repl_word),
+                                                            text = string.format(_("Added: %s ➔ %s"), orig_word, repl_word),
                                                             timeout = 2,
                                                         })
                                                     end
@@ -785,29 +783,29 @@ function KoreaderTTS:showWordMappingDialog()
     local function openEditOrDeleteDialog(orig_word, current_repl)
         local action_dialog
         action_dialog = ButtonDialog:new{
-            title = string.format(_("Từ điển: %s ➔ %s"), orig_word, current_repl),
+            title = string.format(_("Dictionary: %s ➔ %s"), orig_word, current_repl),
             buttons = {
                 {
                     {
-                        text = _("Sửa từ đọc"),
+                        text = _("Edit pronunciation"),
                         align = "left",
                         callback = function()
                             UIManager:close(action_dialog)
                             local edit_dialog
                             edit_dialog = InputDialog:new{
-                                title = string.format(_("Sửa cách đọc cho '%s'"), orig_word),
+                                title = string.format(_("Edit pronunciation for '%s'"), orig_word),
                                 input = current_repl,
                                 buttons = {
                                     {
                                         {
-                                            text = _("Hủy"),
+                                            text = _("Cancel"),
                                             callback = function()
                                                 UIManager:close(edit_dialog)
                                                 this:showWordMappingDialog()
                                             end,
                                         },
                                         {
-                                            text = _("Lưu"),
+                                            text = _("Save"),
                                             is_enter_default = true,
                                             callback = function()
                                                 local new_repl = edit_dialog:getInputText()
@@ -816,7 +814,7 @@ function KoreaderTTS:showWordMappingDialog()
                                                     this.settings:setWordMapping(orig_word, new_repl)
                                                     this.settings:save()
                                                     UIManager:show(InfoMessage:new{
-                                                        text = _("Đã cập nhật cách đọc thành công!"),
+                                                        text = _("Pronunciation updated successfully!"),
                                                         timeout = 2,
                                                     })
                                                 end
@@ -830,14 +828,14 @@ function KoreaderTTS:showWordMappingDialog()
                         end,
                     },
                     {
-                        text = _("Xóa từ này"),
+                        text = _("Delete this word"),
                         align = "left",
                         callback = function()
                             UIManager:close(action_dialog)
                             this.settings:removeWordMapping(orig_word)
                             this.settings:save()
                             UIManager:show(InfoMessage:new{
-                                text = string.format(_("Đã xóa mapping của '%s'."), orig_word),
+                                text = string.format(_("Deleted mapping for '%s'."), orig_word),
                                 timeout = 2,
                             })
                             this:showWordMappingDialog()
@@ -846,7 +844,7 @@ function KoreaderTTS:showWordMappingDialog()
                 },
                 {
                     {
-                        text = _("Quay lại"),
+                        text = _("Back"),
                         callback = function()
                             UIManager:close(action_dialog)
                             this:showWordMappingDialog()
@@ -862,7 +860,7 @@ function KoreaderTTS:showWordMappingDialog()
     local buttons = {
         {
             {
-                text = _("+ Thêm từ mới"),
+                text = _("+ Add new word"),
                 align = "left",
                 callback = function()
                     if this.word_mapping_dialog then
@@ -894,20 +892,20 @@ function KoreaderTTS:showWordMappingDialog()
     -- Reset to defaults and close buttons
     table.insert(buttons, {
         {
-            text = _("Khôi phục từ điển mặc định"),
+            text = _("Reset to default dictionary"),
             callback = function()
                 this.settings:resetWordMappings()
                 this.settings:save()
                 UIManager:close(this.word_mapping_dialog)
                 UIManager:show(InfoMessage:new{
-                    text = _("Đã xóa sạch từ tùy biến, khôi phục từ điển mặc định."),
+                    text = _("Cleared all custom words, restored default dictionary."),
                     timeout = 3,
                 })
                 this:showWordMappingDialog()
             end,
         },
         {
-            text = _("Quay lại Cài đặt"),
+            text = _("Back to Settings"),
             callback = function()
                 UIManager:close(this.word_mapping_dialog)
                 this.word_mapping_dialog = nil
@@ -917,7 +915,7 @@ function KoreaderTTS:showWordMappingDialog()
     })
 
     this.word_mapping_dialog = ButtonDialog:new{
-        title = _("Quản lý từ điển phát âm"),
+        title = _("Pronunciation Dictionary"),
         buttons = buttons,
     }
     UIManager:show(this.word_mapping_dialog)
@@ -939,13 +937,13 @@ function KoreaderTTS:showSettingsDialog()
     local function openServerUrlInput()
         local input_dialog
         input_dialog = InputDialog:new{
-            title = _("Địa chỉ máy chủ âm thanh"),
+            title = _("Speech Server URL"),
             input = this.settings:get("server_url") or "",
             input_hint = "https://api.openai.com/v1/audio/speech",
             buttons = {
                 {
                     {
-                        text = _("Hủy"),
+                        text = _("Cancel"),
                         id = "cancel",
                         callback = function()
                             UIManager:close(input_dialog)
@@ -955,7 +953,7 @@ function KoreaderTTS:showSettingsDialog()
                         end,
                     },
                     {
-                        text = _("Lưu"),
+                        text = _("Save"),
                         is_enter_default = true,
                         callback = function()
                             local val = input_dialog:getInputText()
@@ -983,14 +981,14 @@ function KoreaderTTS:showSettingsDialog()
     local function openApiKeyInput()
         local input_dialog
         input_dialog = InputDialog:new{
-            title = _("Khóa xác thực (API Key)"),
+            title = _("Authentication Key (API Key)"),
             input = this.settings:get("api_key") or "",
             input_hint = "sk-...",
-            description = _("Bắt buộc khi dùng OpenAI Cloud. Để trống nếu dùng server nội bộ."),
+            description = _("Required for OpenAI Cloud. Leave empty for local servers."),
             buttons = {
                 {
                     {
-                        text = _("Hủy"),
+                        text = _("Cancel"),
                         id = "cancel",
                         callback = function()
                             UIManager:close(input_dialog)
@@ -1000,7 +998,7 @@ function KoreaderTTS:showSettingsDialog()
                         end,
                     },
                     {
-                        text = _("Lưu"),
+                        text = _("Save"),
                         is_enter_default = true,
                         callback = function()
                             local val = input_dialog:getInputText() or ""
@@ -1025,13 +1023,13 @@ function KoreaderTTS:showSettingsDialog()
     local function openVoiceInput()
         local input_dialog
         input_dialog = InputDialog:new{
-            title = _("Chọn giọng đọc"),
+            title = _("Select Voice"),
             input = this.settings:get("voice") or "alloy",
             input_hint = "alloy",
             buttons = {
                 {
                     {
-                        text = _("Hủy"),
+                        text = _("Cancel"),
                         id = "cancel",
                         callback = function()
                             UIManager:close(input_dialog)
@@ -1041,7 +1039,7 @@ function KoreaderTTS:showSettingsDialog()
                         end,
                     },
                     {
-                        text = _("Lưu"),
+                        text = _("Save"),
                         is_enter_default = true,
                         callback = function()
                             local val = input_dialog:getInputText()
@@ -1074,10 +1072,10 @@ function KoreaderTTS:showSettingsDialog()
         local current_fmt = this.settings:get("audio_format") or "wav"
 
         local format_options = {
-            { id = "wav",  title = _("WAV (Mặc định - Âm thanh gốc, phát tức thì)") },
-            { id = "flac", title = _("FLAC (Chất lượng cao, tiết kiệm 70% dung lượng)") },
-            { id = "mp3",  title = _("MP3 (Phổ biến, siêu nhẹ, nén 90%)") },
-            { id = "opus", title = _("OPUS (Tối ưu nhất, siêu nhẹ, tải nhanh nhất)") },
+            { id = "wav",  title = _("WAV (Default - Raw audio, instant playback)") },
+            { id = "flac", title = _("FLAC (High quality, saves 70% bandwidth)") },
+            { id = "mp3",  title = _("MP3 (Common, lightweight, 90% compression)") },
+            { id = "opus", title = _("OPUS (Optimal, ultra-lightweight, fastest load)") },
         }
 
         local buttons = {}
@@ -1105,7 +1103,7 @@ function KoreaderTTS:showSettingsDialog()
 
         table.insert(buttons, {
             {
-                text = _("Hủy"),
+                text = _("Cancel"),
                 id = "cancel",
                 callback = function()
                     UIManager:close(format_dialog)
@@ -1117,7 +1115,7 @@ function KoreaderTTS:showSettingsDialog()
         })
 
         format_dialog = ButtonDialog:new{
-            title = _("Chọn định dạng âm thanh"),
+            title = _("Select Audio Format"),
             buttons = buttons,
         }
         UIManager:show(format_dialog)
@@ -1132,7 +1130,7 @@ function KoreaderTTS:showSettingsDialog()
         local current_preload = this.settings:get("preload_count") or 1
         local current_format = this.settings:get("audio_format") or "wav"
 
-        local masked_key = _("(Tùy chọn - Chưa nhập)")
+        local masked_key = _("(Optional - Not set)")
         if current_api_key and current_api_key ~= "" then
             if #current_api_key > 10 then
                 masked_key = current_api_key:sub(1, 4) .. "..." .. current_api_key:sub(-4)
@@ -1144,7 +1142,7 @@ function KoreaderTTS:showSettingsDialog()
         local sv_buttons = {
             {
                 {
-                    text = string.format(_("1. Địa chỉ Máy chủ: %s"), current_server),
+                    text = string.format(_("1. Server URL: %s"), current_server),
                     align = "left",
                     callback = function()
                         UIManager:close(sv_dialog)
@@ -1154,7 +1152,7 @@ function KoreaderTTS:showSettingsDialog()
             },
             {
                 {
-                    text = string.format(_("2. Khóa xác thực (API Key): %s"), masked_key),
+                    text = string.format(_("2. Authentication (API Key): %s"), masked_key),
                     align = "left",
                     callback = function()
                         UIManager:close(sv_dialog)
@@ -1164,7 +1162,7 @@ function KoreaderTTS:showSettingsDialog()
             },
             {
                 {
-                    text = string.format(_("3. Giọng đọc mặc định: %s"), current_voice),
+                    text = string.format(_("3. Default Voice: %s"), current_voice),
                     align = "left",
                     callback = function()
                         UIManager:close(sv_dialog)
@@ -1174,7 +1172,7 @@ function KoreaderTTS:showSettingsDialog()
             },
             {
                 {
-                    text = string.format(_("4. Tốc độ đọc: %.1fx"), current_speed),
+                    text = string.format(_("4. Playback Speed: %.1fx"), current_speed),
                     align = "left",
                     callback = function()
                         UIManager:close(sv_dialog)
@@ -1184,7 +1182,7 @@ function KoreaderTTS:showSettingsDialog()
             },
             {
                 {
-                    text = string.format(_("5. Số câu tải trước: %d câu"), current_preload),
+                    text = string.format(_("5. Preload Count: %d sentences"), current_preload),
                     align = "left",
                     callback = function()
                         UIManager:close(sv_dialog)
@@ -1194,7 +1192,7 @@ function KoreaderTTS:showSettingsDialog()
             },
             {
                 {
-                    text = string.format(_("6. Định dạng âm thanh: %s"), (current_format or "wav"):upper()),
+                    text = string.format(_("6. Audio Format: %s"), (current_format or "wav"):upper()),
                     align = "left",
                     callback = function()
                         UIManager:close(sv_dialog)
@@ -1204,7 +1202,7 @@ function KoreaderTTS:showSettingsDialog()
             },
             {
                 {
-                    text = _("7. Phát thử âm thanh"),
+                    text = _("7. Test Audio Playback"),
                     align = "left",
                     callback = function()
                         this:onTestSingleSentence()
@@ -1213,7 +1211,7 @@ function KoreaderTTS:showSettingsDialog()
             },
             {
                 {
-                    text = _("Quay lại Cài đặt"),
+                    text = _("Back to Settings"),
                     callback = function()
                         UIManager:close(sv_dialog)
                         UIManager:scheduleIn(0.05, function()
@@ -1225,7 +1223,7 @@ function KoreaderTTS:showSettingsDialog()
         }
 
         sv_dialog = ButtonDialog:new{
-            title = _("Cài đặt Máy chủ, Giọng đọc & Tốc độ"),
+            title = _("Server, Voice & Speed Settings"),
             buttons = sv_buttons,
         }
         UIManager:show(sv_dialog)
@@ -1235,14 +1233,14 @@ function KoreaderTTS:showSettingsDialog()
         local input_dialog
         local cur_count = this.settings:get("preload_count") or 1
         input_dialog = InputDialog:new{
-            title = _("Số câu tải trước (1 - 7)"),
+            title = _("Preload Count (1 - 7)"),
             input = tostring(cur_count),
             input_type = "number",
             input_hint = "1",
             buttons = {
                 {
                     {
-                        text = _("Hủy"),
+                        text = _("Cancel"),
                         id = "cancel",
                         callback = function()
                             UIManager:close(input_dialog)
@@ -1252,7 +1250,7 @@ function KoreaderTTS:showSettingsDialog()
                         end,
                     },
                     {
-                        text = _("Lưu"),
+                        text = _("Save"),
                         is_enter_default = true,
                         callback = function()
                             local val = tonumber(input_dialog:getInputText())
@@ -1264,7 +1262,7 @@ function KoreaderTTS:showSettingsDialog()
                                     this.engine:updateConfig({ preload_count = val })
                                 end
                                 UIManager:show(InfoMessage:new{
-                                    text = string.format(_("Đã lưu số câu đệm: %d câu"), val),
+                                    text = string.format(_("Saved preload count: %d sentences"), val),
                                     timeout = 2,
                                 })
                             end
@@ -1284,13 +1282,13 @@ function KoreaderTTS:showSettingsDialog()
     openSpeedInput = function()
         local input_dialog
         input_dialog = InputDialog:new{
-            title = _("Tốc độ đọc (0.5x - 2.0x)"),
+            title = _("Reading Speed (0.5x - 2.0x)"),
             input = tostring(this.settings:get("speed") or 1.0),
             input_hint = "1.0",
             buttons = {
                 {
                     {
-                        text = _("Hủy"),
+                        text = _("Cancel"),
                         id = "cancel",
                         callback = function()
                             UIManager:close(input_dialog)
@@ -1300,7 +1298,7 @@ function KoreaderTTS:showSettingsDialog()
                         end,
                     },
                     {
-                        text = _("Lưu"),
+                        text = _("Save"),
                         is_enter_default = true,
                         callback = function()
                             local val = tonumber(input_dialog:getInputText())
@@ -1315,7 +1313,7 @@ function KoreaderTTS:showSettingsDialog()
                                     this.engine:updateConfig({ speed = val })
                                 end
                                 if this.ui_player and this.ui_player.speed_btn and this.ui_player.speed_btn.setText then
-                                    this.ui_player.speed_btn:setText(string.format(_("Tốc độ: %.1fx"), val))
+                                    this.ui_player.speed_btn:setText(string.format(_("Speed: %.1fx"), val))
                                 end
                                 if this.ui_player and this.ui_player.mini_label_btn and this.ui_player.mini_label_btn.setText then
                                     this.ui_player.mini_label_btn:setText(string.format("%d/%d · %.1fx", this.ui_player.current_index or 1, this.ui_player.total_on_page or 1, val))
@@ -1341,7 +1339,7 @@ function KoreaderTTS:showSettingsDialog()
     local buttons = {
         {
             {
-                text = _("1. Cài đặt Máy chủ, Giọng đọc & Tốc độ"),
+                text = _("1. Server, Voice & Speed Settings"),
                 align = "left",
                 callback = function()
                     local ok_l, log = pcall(require, "logger")
@@ -1359,7 +1357,7 @@ function KoreaderTTS:showSettingsDialog()
         },
         {
             {
-                text = _("2. Quản lý từ điển phát âm"),
+                text = _("2. Pronunciation Dictionary"),
                 align = "left",
                 callback = function()
                     UIManager:close(this.settings_dialog)
@@ -1372,19 +1370,19 @@ function KoreaderTTS:showSettingsDialog()
         },
         {
             {
-                text = _("Khôi phục mặc định"),
+                text = _("Reset to Defaults"),
                 callback = function()
                     this.settings:resetDefaults()
                     this.settings:save()
                     UIManager:close(this.settings_dialog)
                     UIManager:show(InfoMessage:new{
-                        text = _("Đã khôi phục cấu hình về mặc định ban đầu."),
+                        text = _("Settings restored to defaults."),
                         timeout = 3,
                     })
                 end,
             },
             {
-                text = _("Đóng"),
+                text = _("Close"),
                 callback = function()
                     UIManager:close(this.settings_dialog)
                     this.settings_dialog = nil
@@ -1394,7 +1392,7 @@ function KoreaderTTS:showSettingsDialog()
     }
 
     self.settings_dialog = ButtonDialog:new{
-        title = _("Cài đặt đọc giọng nói"),
+        title = _("Text-to-Speech Settings"),
         buttons = buttons,
     }
     local ok_s, err_s = pcall(UIManager.show, UIManager, self.settings_dialog)

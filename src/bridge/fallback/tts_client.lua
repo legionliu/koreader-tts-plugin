@@ -281,7 +281,7 @@ function TTSClient:fetchSpeechAsync(text, callback, opts)
     end
 
     if not text or text == "" then
-        if callback then callback(false, "Văn bản rỗng") end
+        if callback then callback(false, "Empty text") end
         return cancel_handle
     end
 
@@ -317,7 +317,7 @@ function TTSClient:fetchSpeechAsync(text, callback, opts)
                 f:close()
                 if not is_cancelled then finish_callback(true, final_wav_path) end
             else
-                if not is_cancelled then finish_callback(false, "Không thể ghi file cache") end
+                if not is_cancelled then finish_callback(false, "Cannot write cache file") end
             end
         end)
         return cancel_handle
@@ -413,7 +413,7 @@ function TTSClient:_fetchViaSocket(url_info, payload, api_key, timeout, temp_wav
                     while true do
                         if os.time() - start_time > timeout then
                             s:close()
-                            return nil, "Hết thời gian kết nối TCP"
+                            return nil, "TCP connection timeout"
                         end
                         local _, can_write, _ = socket.select(nil, {s}, 0)
                         if can_write and #can_write > 0 then
@@ -424,7 +424,7 @@ function TTSClient:_fetchViaSocket(url_info, payload, api_key, timeout, temp_wav
                 else
                     if TTSClient._dns_cache then TTSClient._dns_cache[target_host] = nil end
                     s:close()
-                    return nil, "Lỗi kết nối tới " .. url_info.host .. ":" .. url_info.port .. " (" .. tostring(conn_err) .. ")"
+                    return nil, "Connection error to " .. url_info.host .. ":" .. url_info.port .. " (" .. tostring(conn_err) .. ")"
                 end
             end
 
@@ -448,17 +448,17 @@ function TTSClient:_fetchViaSocket(url_info, payload, api_key, timeout, temp_wav
                         elseif hs_err == "wantread" or hs_err == "wantwrite" or hs_err == "timeout" then
                             if os.time() - start_time > timeout then
                                 s:close()
-                                return nil, "Hết thời gian bắt tay SSL"
+                                return nil, "SSL handshake timeout"
                             end
                             coroutine.yield("handshake")
                         else
                             s:close()
-                            return nil, "Lỗi bắt tay SSL: " .. tostring(hs_err)
+                            return nil, "SSL handshake error: " .. tostring(hs_err)
                         end
                     end
                 else
                     s:close()
-                    return nil, "HTTPS yêu cầu thư viện LuaSec (ssl) nhưng không tìm thấy"
+                    return nil, "HTTPS requires LuaSec (ssl) library but not found"
                 end
             end
 
@@ -519,13 +519,13 @@ function TTSClient:_fetchViaSocket(url_info, payload, api_key, timeout, temp_wav
                 else
                     pcall(function() tcp:close() end)
                     this._pooled_socket = nil
-                    return false, "Lỗi gửi dữ liệu HTTP: " .. tostring(send_err)
+                    return false, "HTTP send error: " .. tostring(send_err)
                 end
             end
             if os.time() - start_time > timeout then
                 pcall(function() tcp:close() end)
                 this._pooled_socket = nil
-                return false, "Hết thời gian gửi dữ liệu HTTP"
+                return false, "HTTP send timeout"
             end
         end
 
@@ -547,12 +547,12 @@ function TTSClient:_fetchViaSocket(url_info, payload, api_key, timeout, temp_wav
             else
                 pcall(function() tcp:close() end)
                 this._pooled_socket = nil
-                return false, "Lỗi nhận phản hồi HTTP: " .. tostring(recv_err)
+                return false, "HTTP response error: " .. tostring(recv_err)
             end
             if os.time() - start_time > timeout then
                 pcall(function() tcp:close() end)
                 this._pooled_socket = nil
-                return false, "Hết thời gian chờ nhận phản hồi từ server"
+                return false, "Server response timeout"
             end
         end
 
@@ -564,9 +564,9 @@ function TTSClient:_fetchViaSocket(url_info, payload, api_key, timeout, temp_wav
             pcall(function() tcp:close() end)
             this._pooled_socket = nil
             if err_body:find("Unknown voice") or err_body:find("voice") then
-                return false, string.format("Lỗi giọng đọc: Máy chủ không hỗ trợ giọng này.\nChi tiết: %s\nVui lòng kiểm tra lại cấu hình giọng đọc trong Cài đặt.", err_body)
+                return false, string.format("Unsupported voice error: Server does not support this voice.\nDetail: %s\nPlease check voice settings.", err_body)
             end
-            return false, string.format("Máy chủ TTS phản hồi lỗi HTTP %s: %s", tostring(status_code or "Unknown"), tostring(err_body))
+            return false, string.format("TTS server error HTTP %s: %s", tostring(status_code or "Unknown"), tostring(err_body))
         end
 
         -- Parse HTTP version, Content-Length, Transfer-Encoding, and Connection header
@@ -583,7 +583,7 @@ function TTSClient:_fetchViaSocket(url_info, payload, api_key, timeout, temp_wav
         if not out_file then
             pcall(function() tcp:close() end)
             this._pooled_socket = nil
-            return false, "Không thể mở file tạm để ghi: " .. tostring(file_err)
+            return false, "Cannot open temp file for writing: " .. tostring(file_err)
         end
 
         local total_read = 0
@@ -602,14 +602,14 @@ function TTSClient:_fetchViaSocket(url_info, payload, api_key, timeout, temp_wav
                         os.remove(temp_wav_path)
                         pcall(function() tcp:close() end)
                         this._pooled_socket = nil
-                        return false, "Lỗi nhận kích thước chunk: " .. tostring(recv_err)
+                        return false, "Error receiving chunk size: " .. tostring(recv_err)
                     end
                     if os.time() - start_time > timeout then
                         out_file:close()
                         os.remove(temp_wav_path)
                         pcall(function() tcp:close() end)
                         this._pooled_socket = nil
-                        return false, "Hết thời gian chờ chunk"
+                        return false, "Chunk timeout"
                     end
                 end
 
@@ -636,7 +636,7 @@ function TTSClient:_fetchViaSocket(url_info, payload, api_key, timeout, temp_wav
                             os.remove(temp_wav_path)
                             pcall(function() tcp:close() end)
                             this._pooled_socket = nil
-                            return false, "Mất kết nối giữa chừng khi đọc chunk"
+                            return false, "Connection lost while reading chunk"
                         end
                         coroutine.yield("downloading")
                     end
@@ -645,7 +645,7 @@ function TTSClient:_fetchViaSocket(url_info, payload, api_key, timeout, temp_wav
                         os.remove(temp_wav_path)
                         pcall(function() tcp:close() end)
                         this._pooled_socket = nil
-                        return false, "Hết thời gian tải chunk data"
+                        return false, "Chunk data download timeout"
                     end
                 end
 
@@ -701,7 +701,7 @@ function TTSClient:_fetchViaSocket(url_info, payload, api_key, timeout, temp_wav
                     os.remove(temp_wav_path)
                     pcall(function() tcp:close() end)
                     this._pooled_socket = nil
-                    return false, "Mất kết nối khi đang tải file âm thanh: " .. tostring(socket_err)
+                    return false, "Connection lost while downloading audio: " .. tostring(socket_err)
                 end
 
                 if os.time() - start_time > timeout then
@@ -709,7 +709,7 @@ function TTSClient:_fetchViaSocket(url_info, payload, api_key, timeout, temp_wav
                     os.remove(temp_wav_path)
                     pcall(function() tcp:close() end)
                     this._pooled_socket = nil
-                    return false, "Hết thời gian tải file âm thanh"
+                    return false, "Audio download timeout"
                 end
 
                 coroutine.yield("downloading")
@@ -732,13 +732,13 @@ function TTSClient:_fetchViaSocket(url_info, payload, api_key, timeout, temp_wav
 
         -- Verify audio header based on format
         local verify_file = io.open(temp_wav_path, "rb")
-        if not verify_file then return false, "Không tìm thấy file sau khi tải" end
+        if not verify_file then return false, "File not found after download" end
         local header = verify_file:read(12)
         verify_file:close()
 
         if not verify_audio_header(header, format) then
             os.remove(temp_wav_path)
-            return false, string.format("Dữ liệu trả về không phải âm thanh %s hợp lệ", tostring(format or "wav"):upper())
+            return false, string.format("Returned data is not valid %s audio", tostring(format or "wav"):upper())
         end
 
         os.remove(final_wav_path)
@@ -755,7 +755,7 @@ function TTSClient:_fetchViaSocket(url_info, payload, api_key, timeout, temp_wav
         local ok, status_tag, result_or_err = coroutine.resume(co)
         if not ok then
             os.remove(temp_wav_path)
-            if callback then callback(false, "Lỗi coroutine: " .. tostring(status_tag)) end
+            if callback then callback(false, "Coroutine error: " .. tostring(status_tag)) end
             return
         end
 
@@ -825,20 +825,20 @@ function TTSClient:_fetchViaCurl(server_url, payload, api_key, timeout, temp_wav
 
             if err_body:find("Unknown voice") or err_body:find("voice") then
                 if callback then
-                    callback(false, string.format("Lỗi giọng đọc: Máy chủ không hỗ trợ giọng này.\nChi tiết: %s\nVui lòng vào 'Cài đặt máy chủ & Giọng đọc' để chọn lại giọng phù hợp.", err_body))
+                    callback(false, string.format("Voice error: Server does not support this voice.\nDetail: %s\nPlease select a supported voice in settings.", err_body))
                 end
                 return
             end
 
             if callback then
-                callback(false, string.format("Máy chủ phản hồi lỗi: %s", err_body ~= "" and err_body or "Dữ liệu trả về không phải âm thanh WAV"))
+                callback(false, string.format("Server error: %s", err_body ~= "" and err_body or "Invalid audio data"))
             end
             return
         end
 
         os.remove(temp_wav_path)
         if callback then
-            callback(false, "Không thể kết nối đến máy chủ TTS (kết nối thất bại hoặc hết thời gian)")
+            callback(false, "Cannot connect to TTS server (connection failed or timed out)")
         end
     end
 
@@ -874,7 +874,7 @@ function TTSClient:_fetchViaCurl(server_url, payload, api_key, timeout, temp_wav
                 os.remove(exit_marker)
                 os.remove(temp_wav_path)
                 os.remove(tmp_json)
-                if callback then callback(false, "Hết thời gian tải file âm thanh (timeout)") end
+                if callback then callback(false, "Audio download timeout") end
                 return
             end
 

@@ -108,12 +108,20 @@ run_test("DocumentChunker: text sanitization (footnotes, hyphens, numbers)", fun
     assert(cleaned:find("Một đoạn văn bản chứa chú thích"), "Body text must be preserved")
 end)
 
-run_test("DocumentChunker: pronunciation normalization", function()
+run_test("DocumentChunker: pronunciation normalization (VI & EN)", function()
     local chunker = DocumentChunker:new()
     local custom = { ["AI"] = "Trí tuệ nhân tạo" }
     local norm = chunker:normalizePronunciation("Công nghệ AI tại TP. Hồ Chí Minh.", custom)
     assert(norm:find("Trí tuệ nhân tạo"), "Must expand custom mapping AI")
     assert(norm:find("Thành phố"), "Must expand standard abbreviation TP.")
+
+    local sm = SettingsManager:new()
+    local en_text = chunker:normalizePronunciation("Dr. Watson and Mr. Holmes met at St. Bartholomew Hospital, approx. 2 miles away, etc.", sm:getCustomMappings())
+    assert(en_text:find("Doctor Watson"), "Must expand Dr. to Doctor")
+    assert(en_text:find("Mister Holmes"), "Must expand Mr. to Mister")
+    assert(en_text:find("Saint Bartholomew"), "Must expand St. to Saint")
+    assert(en_text:find("approximately"), "Must expand approx. to approximately")
+    assert(en_text:find("etcetera"), "Must expand etc. to etcetera")
 end)
 
 run_test("DocumentChunker: 3-tier sentence chunking rules", function()
@@ -156,7 +164,8 @@ end)
 
 run_test("DocumentChunker: cross-page sentence stitching across boundary", function()
     local page1_text = "Chính bà Trùm mở cửa đón nàng, ôm nàng trong vòng tay ấm áp, rồi bà ngắm nghía Kay, thành"
-    local page2_text = "thật nói:\n– Cháu đẹp thật. Con trai bác ngu ngốc quá."
+    -- Page 2 text includes a leading header number and a multi-byte closing quote
+    local page2_text = " 42 \nthật nói:\n– Cháu đẹp thật.” Con trai bác ngu ngốc quá."
 
     local cur_page = 1
     local mock_doc = {
@@ -182,7 +191,7 @@ run_test("DocumentChunker: cross-page sentence stitching across boundary", funct
 
     local chunks_p2 = chunker:extractPageChunks(mock_doc, 2, nil)
     assert(#chunks_p2 > 0, "Must extract chunks from Page 2")
-    assert(not chunks_p2[1].text:find("^thật nói:"), "Page 2 must not duplicate the stitched head")
+    assert(not chunks_p2[1].text:find("^thật nói:"), "Page 2 must not duplicate the stitched head even with header number")
     assert(chunks_p2[1].text:find("Cháu đẹp thật"), "Page 2 must start from the remaining sentence")
 end)
 

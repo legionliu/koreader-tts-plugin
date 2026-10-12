@@ -635,9 +635,16 @@ local function findSentenceHead(text)
         if is_term then
             local end_idx = i
             while end_idx < len do
-                local peek = text:sub(end_idx + 1, end_idx + 1)
-                if peek == "." or peek == "?" or peek == "!" or peek == ":" or peek == '"' or peek == '”' or peek == "…" or peek == "\226\128\157" then
+                local peek1 = text:sub(end_idx + 1, end_idx + 1)
+                if peek1 == "." or peek1 == "?" or peek1 == "!" or peek1 == ":" or peek1 == '"' or peek1 == "'" then
                     end_idx = end_idx + 1
+                elseif end_idx + 3 <= len then
+                    local peek3 = text:sub(end_idx + 1, end_idx + 3)
+                    if peek3 == "”" or peek3 == "…" or peek3 == "’" or peek3 == "\226\128\157" or peek3 == "\226\128\166" or peek3 == "\226\128\153" then
+                        end_idx = end_idx + 3
+                    else
+                        break
+                    end
                 else
                     break
                 end
@@ -668,22 +675,25 @@ function TextChunker:extractPageChunks(document, page_num, ui)
         return {}
     end
 
-    -- 0. Check if this page has a head that was already stitched into the previous page
+    -- 1. Sanitize text
+    local cleaned_text = self:sanitize(raw_page_text)
+    if cleaned_text == "" then
+        return {}
+    end
+
+    -- 1.1 Strip head that was already stitched into the previous page (check cleaned text first to avoid header interference)
     self._stitched_heads = self._stitched_heads or {}
     local head_to_strip = self._stitched_heads[page_num]
     if head_to_strip and head_to_strip ~= "" then
         self._stitched_heads[page_num] = nil
         local esc = head_to_strip:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
         local pat = "^%s*" .. esc .. "%s*"
-        if raw_page_text:match(pat) then
+        if cleaned_text:match(pat) then
+            cleaned_text = cleaned_text:gsub(pat, "", 1)
+        elseif raw_page_text:match(pat) then
             raw_page_text = raw_page_text:gsub(pat, "", 1)
+            cleaned_text = self:sanitize(raw_page_text)
         end
-    end
-
-    -- 1. Sanitize text
-    local cleaned_text = self:sanitize(raw_page_text)
-    if cleaned_text == "" then
-        return {}
     end
 
     -- 2. 3-tier sentence chunking

@@ -44,8 +44,9 @@ local DEFAULT_SETTINGS = {
     custom_pronunciations = {},                        -- Custom table { [orig_word] = "replacement" }
 }
 
--- Default Vietnamese abbreviations to expanded pronunciation for TTS
+-- Default abbreviations to expanded pronunciation for TTS (multilingual: VI & EN)
 local DEFAULT_PRONUNCIATION_MAP = {
+    -- Vietnamese abbreviations
     ["TP."]     = "Thành phố",
     ["Tp."]     = "Thành phố",
     ["TS."]     = "Tiến sĩ",
@@ -58,6 +59,20 @@ local DEFAULT_PRONUNCIATION_MAP = {
     ["CNTT"]    = "Công nghệ thông tin",
     ["NXB"]     = "Nhà xuất bản",
     ["K/g"]     = "Kính gửi",
+
+    -- English abbreviations
+    ["Dr."]     = "Doctor",
+    ["Mr."]     = "Mister",
+    ["Mrs."]    = "Missus",
+    ["Ms."]     = "Mizz",
+    ["Prof."]   = "Professor",
+    ["St."]     = "Saint",
+    ["vs."]     = "versus",
+    ["etc."]    = "etcetera",
+    ["e.g."]    = "for example",
+    ["i.e."]    = "that is",
+    ["dept."]   = "department",
+    ["approx."] = "approximately",
 }
 
 local function deep_copy(orig)

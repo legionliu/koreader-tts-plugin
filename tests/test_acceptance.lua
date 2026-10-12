@@ -181,6 +181,30 @@ run_test("Acceptance: Resume session from persisted book state", function()
     plugin:onExit()
 end)
 
+-- 7. Multi-language Switching (English default & Vietnamese localization)
+run_test("Acceptance: Bilingual switching (English default and Vietnamese localization)", function()
+    local plugin = createTestPlugin()
+    local i18n = require("src.util.i18n")
+
+    -- 1. Test in English
+    i18n.setLanguage("en")
+    local menu_en = {}
+    plugin:addToMainMenu(menu_en)
+    assert(menu_en.koreader_tts.text == "Text-to-Speech (TTS)", "English main menu title")
+    assert(menu_en.koreader_tts.sub_item_table[1].text == "▶ Read from page start", "English sub menu item")
+
+    -- 2. Test in Vietnamese
+    i18n.setLanguage("vi")
+    local menu_vi = {}
+    plugin:addToMainMenu(menu_vi)
+    assert(menu_vi.koreader_tts.text == "Đọc bằng giọng nói", "Vietnamese main menu title")
+    assert(menu_vi.koreader_tts.sub_item_table[1].text == "▶ Đọc từ đầu trang này", "Vietnamese sub menu item")
+
+    -- Reset back to auto
+    i18n.setLanguage(nil)
+    plugin:onExit()
+end)
+
 print("==========================================================")
 print(string.format("  ALL %d/%d ACCEPTANCE TESTS PASSED!", passed_tests, total_tests))
 print("==========================================================")

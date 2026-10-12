@@ -187,7 +187,7 @@ end
 function NativeEngine:synthesizeSingle(text, callback)
     if not callback then return end
     if not text or text == "" then
-        callback(false, "Văn bản rỗng")
+        callback(false, "Empty text")
         return
     end
 

@@ -16,9 +16,14 @@ if not ok_uimanager or not UIManager then
     }
 end
 
-local ok_gettext, _ = pcall(require, "gettext")
-if not ok_gettext or type(_) ~= "function" then
-    _ = function(msg) return msg end
+local ok_i18n, _ = pcall(require, "src.util.i18n")
+if not ok_i18n or type(_) ~= "function" then
+    local ok_gettext, gt = pcall(require, "gettext")
+    if ok_gettext and type(gt) == "function" then
+        _ = gt
+    else
+        _ = function(msg) return msg end
+    end
 end
 
 local SleepTimer = {}
@@ -75,17 +80,17 @@ end
 --- Get concise display string for UI button
 function SleepTimer:getDisplayText()
     if self.mode == "0" or self.mode == 0 then
-        return _("Hẹn giờ: Tắt")
+        return _("Sleep timer: Off")
     elseif self.mode == "page" then
-        return _("Hẹn giờ: Hết trang")
+        return _("Sleep timer: Page end")
     elseif self.mode == "chapter" then
-        return _("Hẹn giờ: Hết chương")
+        return _("Sleep timer: Chapter end")
     else
         local mins = math.ceil(self.remaining_seconds / 60)
         if mins > 0 then
-            return string.format(_("Hẹn giờ: %dp"), mins)
+            return string.format(_("Sleep timer: %dm"), mins)
         else
-            return string.format(_("Hẹn giờ: %ds"), self.remaining_seconds)
+            return string.format(_("Sleep timer: %ds"), self.remaining_seconds)
         end
     end
 end
