@@ -145,6 +145,21 @@ function KoreaderTTS:init()
         chunker = chunker,
     }
 
+    -- Put "Text-to-Speech" at the TOP of the Tools menu (KOReader appends items that are
+    -- not in its order list after "More tools"). Change the 1 to another position if you like.
+    do
+        local ok_o, order = pcall(require, "ui/elements/reader_menu_order")
+        if ok_o and type(order) == "table" and type(order.tools) == "table" then
+            local present = false
+            for _idx, id in ipairs(order.tools) do
+                if id == "koreader_tts" then present = true break end
+            end
+            if not present then
+                table.insert(order.tools, 1, "koreader_tts")
+            end
+        end
+    end
+
     if self.ui and self.ui.menu and type(self.ui.menu.registerToMainMenu) == "function" then
         self.ui.menu:registerToMainMenu(self)
         self.ui.menu.tab_item_table = nil
