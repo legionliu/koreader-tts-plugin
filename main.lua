@@ -1214,7 +1214,7 @@ function KoreaderTTS:showSettingsDialog()
         input_dialog:onShowKeyboard()
     end
 
-    local function openVoiceInput()
+    local function openVoiceTextInput()
         local input_dialog
         input_dialog = InputDialog:new{
             title = _("Select Voice"),
@@ -1255,6 +1255,134 @@ function KoreaderTTS:showSettingsDialog()
         }
         UIManager:show(input_dialog)
         input_dialog:onShowKeyboard()
+    end
+
+    -- ===== Voice picker: choose language group, then pick a voice from the server's list =====
+    local function vlog(msg)
+        local ok_lg, lg = pcall(require, "logger")
+        if ok_lg and lg and lg.warn then lg.warn(msg) end
+    end
+
+    local function saveVoice(val)
+        this.settings:set("voice", val)
+        this.settings:save()
+        if this.engine and this.engine.updateConfig then
+            this.engine:updateConfig({ voice = val })
+        end
+    end
+
+    local function reopenSettings()
+        UIManager:nextTick(function()
+            if openServerAndVoiceDialog then openServerAndVoiceDialog() end
+        end)
+    end
+
+    local function showVoiceMenu(VoiceList, voices, title)
+        local Menu = require("ui/widget/menu")
+        local Screen = require("device").screen
+        local current = this.settings:get("voice") or ""
+        local items = {}
+        for _idx, v in ipairs(voices) do
+            items[#items + 1] = {
+                text = ((v.name == current) and "✓ " or "") .. VoiceList.shortName(v),
+                mandatory = v.language,
+                voice_name = v.name,
+            }
+        end
+        local menu
+        local chosen = false
+        menu = Menu:new{
+            title = title,
+            item_table = items,
+            is_borderless = true,
+            is_popout = false,
+            width = Screen:getWidth(),
+            height = Screen:getHeight(),
+            onMenuChoice = function(_self, item)
+                if item and item.voice_name then
+                    chosen = true
+                    saveVoice(item.voice_name)
+                    UIManager:close(menu)
+                    reopenSettings()
+                end
+            end,
+            close_callback = function()
+                if not chosen then reopenSettings() end
+            end,
+        }
+        UIManager:show(menu)
+    end
+
+    local function openVoiceGroupDialog(VoiceList, all_voices, source, err)
+        local group_dialog
+        local buttons = {}
+        local function openList(list, list_title)
+            UIManager:close(group_dialog)
+            UIManager:nextTick(function()
+                local ok_m, err_m = pcall(showVoiceMenu, VoiceList, list, list_title)
+                if not ok_m then
+                    vlog("TTS: voice menu error: " .. tostring(err_m))
+                    openVoiceTextInput()
+                end
+            end)
+        end
+        for _idx, g in ipairs(VoiceList.GROUPS) do
+            local group = VoiceList.filter(all_voices, g.id)
+            if #group > 0 then
+                buttons[#buttons + 1] = {{
+                    text = string.format("%s (%d)", g.title, #group),
+                    callback = function() openList(group, g.title) end,
+                }}
+            end
+        end
+        buttons[#buttons + 1] = {{
+            text = string.format(_("All languages (%d)"), #all_voices),
+            callback = function() openList(all_voices, _("All languages")) end,
+        }}
+        buttons[#buttons + 1] = {{
+            text = _("Type voice name manually..."),
+            callback = function()
+                UIManager:close(group_dialog)
+                UIManager:nextTick(openVoiceTextInput)
+            end,
+        }}
+        buttons[#buttons + 1] = {{
+            text = _("Cancel"),
+            callback = function()
+                UIManager:close(group_dialog)
+                reopenSettings()
+            end,
+        }}
+        local src_note = (source == "server") and _("Voice list loaded from server")
+            or (source == "cache") and _("Server unreachable - using cached voice list")
+            or _("Server unreachable - using built-in voice list")
+        group_dialog = ButtonDialog:new{
+            title = string.format("%s\n%s: %s", src_note, _("Current voice"), tostring(this.settings:get("voice") or "")),
+            buttons = buttons,
+        }
+        UIManager:show(group_dialog)
+    end
+
+    local function openVoiceInput()
+        local ok_vl, VoiceList = pcall(require, "src.service.voice_list")
+        if not ok_vl then
+            vlog("TTS: voice_list module missing: " .. tostring(VoiceList))
+            return openVoiceTextInput()
+        end
+        local loading = InfoMessage:new{ text = _("Loading voice list..."), timeout = 15 }
+        UIManager:show(loading)
+        UIManager:forceRePaint()
+        UIManager:nextTick(function()
+            local ok_l, voices, source, err = pcall(VoiceList.load,
+                this.settings:get("server_url"), this.settings:get("api_key"), this.cache_dir, 10)
+            UIManager:close(loading)
+            if not ok_l or not voices or #voices == 0 then
+                vlog("TTS: voice list load failed: " .. tostring(voices))
+                return openVoiceTextInput()
+            end
+            if err then vlog("TTS: voice list fetch error: " .. tostring(err)) end
+            openVoiceGroupDialog(VoiceList, voices, source, err)
+        end)
     end
 
     local openSpeedInput
