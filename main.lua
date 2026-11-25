@@ -1769,7 +1769,13 @@ function KoreaderTTS:onCloseWidget()
 end
 
 --- Handle device suspend / screen turn-off: pause playback cleanly
+-- Set to true if you want reading to pause whenever the screen locks / the app goes to background.
+local PAUSE_ON_SUSPEND = false
+
 function KoreaderTTS:onSuspend()
+    if not PAUSE_ON_SUSPEND then
+        return -- keep reading with the screen locked
+    end
     if self.playback_queue and (self.playback_queue:getState() == "PLAYING" or self.playback_queue:getState() == "PREFETCHING") then
         self.playback_queue:pause()
     end

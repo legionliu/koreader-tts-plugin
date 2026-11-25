@@ -94,6 +94,17 @@ function PlaybackQueue:_setState(new_state)
             end
         end)
 
+        -- Keep the CPU awake while reading aloud (so it keeps going with the screen locked)
+        pcall(function()
+            local ok_w, WakeLock = pcall(require, "src.util.wakelock")
+            if not ok_w or not WakeLock then return end
+            if new_state == "PLAYING" or new_state == "PREFETCHING" then
+                WakeLock.acquire()
+            else
+                WakeLock.release()
+            end
+        end)
+
         if self.on_state_change then
             pcall(self.on_state_change, old_state, new_state)
         end
