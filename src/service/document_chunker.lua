@@ -17,6 +17,72 @@ TextChunker.__index = TextChunker
 local DEFAULT_MIN_CHARS = 120
 local DEFAULT_MAX_CHARS = 300
 
+-- ===========================================================================
+-- CJK punctuation configuration  --  EDIT THESE LISTS to add your own symbols.
+-- Each entry must be ONE character (CJK punctuation is 3 bytes in UTF-8; that's fine).
+-- ===========================================================================
+local CJK_PUNCT = {
+    -- Marks that END a sentence (the text is split right after them)
+    sentence_end = { "。", "！", "？", "‼", "⁇", "⁈", "⁉", "…" },
+    -- Closing marks that stay attached to the sentence they close, e.g.  。”  ？）  。」
+    closers = { "”", "’", "」", "』", "）", "》", "】", "〉", "］", "｝", "〕", "〗" },
+    -- Soft break points, only used when ONE sentence is longer than max_chunk_chars.
+    -- Groups are tried in order; inside a group the right-most mark that fits wins.
+    clause_groups = {
+        { ",", "，", "、" },
+        { ";", "；" },
+        { ":", "：" },
+        { "—", "―", "-" },   -- em dash (——is two of these), horizontal bar, hyphen
+    },
+}
+
+local function toSet(list)
+    local set = {}
+    for _, ch in ipairs(list) do set[ch] = true end
+    return set
+end
+local SENT_END = toSet(CJK_PUNCT.sentence_end)
+local CLOSERS = toSet(CJK_PUNCT.closers)
+local CLAUSE_GROUPS = {}
+for _, group in ipairs(CJK_PUNCT.clause_groups) do
+    table.insert(CLAUSE_GROUPS, toSet(group))
+end
+local ASCII_TAIL = { ['"'] = true, ["'"] = true, ["?"] = true, ["!"] = true }
+
+-- UTF-8 helpers (LuaJIT in KOReader has no utf8 library)
+local function charLen(b)
+    if b < 0xC0 then return 1 elseif b < 0xE0 then return 2 elseif b < 0xF0 then return 3 else return 4 end
+end
+local function charAt(str, i)
+    local b = str:byte(i)
+    if not b then return "" end
+    return str:sub(i, i + charLen(b) - 1)
+end
+--- the character that ends right before byte position i
+local function prevChar(str, i)
+    if i <= 1 then return "" end
+    local j = i - 1
+    while j > 1 do
+        local b = str:byte(j)
+        if b >= 0x80 and b < 0xC0 then j = j - 1 else break end
+    end
+    return str:sub(j, i - 1)
+end
+--- Han / kana / CJK punctuation / full-width forms (no spaces are used around these)
+local function isCJK(ch)
+    local b = ch:byte(1)
+    return b ~= nil and ((b >= 0xE3 and b <= 0xE9) or b == 0xEF)
+end
+--- join two text pieces; no space is inserted next to CJK characters
+local function joinText(a, b)
+    if a == "" then return b end
+    if b == "" then return a end
+    if isCJK(prevChar(a, #a + 1)) or isCJK(charAt(b, 1)) then
+        return a .. b
+    end
+    return a .. " " .. b
+end
+
 --- Initialize TextChunker instance
 -- @param options Config table: min_chars, max_chars, filter_footnotes, custom_mappings
 function TextChunker:new(options)
@@ -149,24 +215,33 @@ local function splitLongSentence(sentence, max_limit)
     local remaining = sentence
 
     while #remaining > max_limit do
-        local search_sub = remaining:sub(1, max_limit)
+        -- largest prefix <= max_limit bytes that ends on a character boundary
+        local cut = max_limit
+        while cut > 1 do
+            local nb = remaining:byte(cut + 1)
+            if nb and nb >= 0x80 and nb < 0xC0 then cut = cut - 1 else break end
+        end
+        local search_sub = remaining:sub(1, cut)
 
-        -- Find natural split point before max_limit: comma, semicolon, colon, dash
+        -- Find natural split point: comma / semicolon / colon / dash groups (ASCII + CJK)
         local split_pos = nil
-        local best_punc = { ",", ";", ":", "—", "-" }
-        for _, punc in ipairs(best_punc) do
-            local p_idx = nil
-            local cur = 1
-            while true do
-                local found = search_sub:find(punc, cur, true)
-                if not found or found > max_limit then break end
-                if found >= 20 then
-                    p_idx = found
+        for _, group in ipairs(CLAUSE_GROUPS) do
+            local best = nil
+            local k = 1
+            while k <= #search_sub do
+                local ch = charAt(search_sub, k)
+                if group[ch] and k >= 20 then
+                    best = k + #ch - 1
                 end
-                cur = found + 1
+                k = k + #ch
             end
-            if p_idx then
-                split_pos = p_idx
+            if best then
+                split_pos = best
+                -- keep doubled marks together (e.g. the Chinese dash ——)
+                local last_ch = prevChar(remaining, split_pos + 1)
+                while charAt(remaining, split_pos + 1) == last_ch and last_ch ~= "," do
+                    split_pos = split_pos + #last_ch
+                end
                 break
             end
         end
@@ -177,7 +252,7 @@ local function splitLongSentence(sentence, max_limit)
             local cur = 1
             while true do
                 local found = search_sub:find(" ", cur, true)
-                if not found or found > max_limit then break end
+                if not found or found > cut then break end
                 if found >= 20 then
                     space_idx = found
                 end
@@ -186,9 +261,9 @@ local function splitLongSentence(sentence, max_limit)
             split_pos = space_idx
         end
 
-        -- Hard split fallback at max_limit
+        -- Hard split fallback (always on a character boundary)
         if not split_pos then
-            split_pos = max_limit
+            split_pos = cut
         end
 
         local part1 = remaining:sub(1, split_pos):gsub("^%s+", ""):gsub("%s+$", "")
@@ -237,61 +312,92 @@ function TextChunker:splitSentences(text)
             end
         end
 
-        -- Check sentence terminators: . ? ! …
-        local is_delimiter = false
-        if (c == "." or c == "?" or c == "!" or c == "…") then
-            -- Ignore periods in decimal numbers (e.g. 3.14, 10.5)
-            local prev_c = (i > 1) and text:sub(i - 1, i - 1) or ""
-            local is_decimal = (c == "." and prev_c:match("%d") and next_c:match("%d"))
-
-            -- Ignore periods in known abbreviations (TP., TS., ThS., GS., v.v.)
-            local is_abbrev = false
-            if c == "." then
-                local check_window = text:sub(math.max(1, i - 10), i)
-                local prev_word = check_window:match("([%a%.]+)%.$")
-                if prev_word then
-                    local lower_pw = prev_word:lower()
-                    local KNOWN_ABBREVS = {
-                        ["tp"] = true, ["ts"] = true, ["ths"] = true, ["pgs"] = true,
-                        ["gs"] = true, ["bs"] = true, ["v.v"] = true, ["nxb"] = true,
-                        ["ks"] = true, ["dr"] = true, ["mr"] = true, ["mrs"] = true,
-                        ["ms"] = true, ["prof"] = true,
-                    }
-                    if KNOWN_ABBREVS[lower_pw] or (prev_word:match("^%u+$") and #prev_word <= 4) then
-                        is_abbrev = true
-                    end
-                end
-            end
-
-            if not is_decimal and not is_abbrev then
-                -- Delimiter is valid if outside quotes or immediately followed by closing quote/space
-                if not in_quotes or next_c == '"' or next_c == '”' or next_c == ' ' or next_c == "" then
-                    is_delimiter = true
+        -- CJK sentence terminators (。！？ …): always a boundary, closing marks stay attached
+        local cjk_end = nil
+        if text:byte(i) >= 0xE0 then
+            local ch = charAt(text, i)
+            if SENT_END[ch] then
+                local after = charAt(text, i + #ch)
+                -- "…" is only a boundary inside CJK text (keeps English "Well… I think" intact)
+                if ch ~= "…" or isCJK(prevChar(text, i)) or isCJK(after) or CLOSERS[after] then
+                    cjk_end = i + #ch - 1
                 end
             end
         end
 
-        if is_delimiter then
-            -- Collect contiguous punctuation marks (e.g. !?, ..., !!!)
-            local end_idx = i
-            while end_idx < len do
-                local peek = text:sub(end_idx + 1, end_idx + 1)
-                if peek == "." or peek == "?" or peek == "!" or peek == "…" or peek == '"' or peek == '”' then
-                    end_idx = end_idx + 1
+        if cjk_end then
+            local e = cjk_end
+            while e < len do
+                local nxt = charAt(text, e + 1)
+                if SENT_END[nxt] or CLOSERS[nxt] or ASCII_TAIL[nxt] then
+                    e = e + #nxt
                 else
                     break
                 end
             end
-
-            local s = text:sub(start_idx, end_idx):gsub("^%s+", ""):gsub("%s+$", "")
+            local s = text:sub(start_idx, e):gsub("^%s+", ""):gsub("%s+$", "")
             if #s > 0 then
                 table.insert(raw_sentences, s)
             end
-
-            i = end_idx + 1
+            i = e + 1
             start_idx = i
         else
-            i = i + 1
+            -- Check sentence terminators: . ? ! …
+            local is_delimiter = false
+            if (c == "." or c == "?" or c == "!" or c == "…") then
+                -- Ignore periods in decimal numbers (e.g. 3.14, 10.5)
+                local prev_c = (i > 1) and text:sub(i - 1, i - 1) or ""
+                local is_decimal = (c == "." and prev_c:match("%d") and next_c:match("%d"))
+
+                -- Ignore periods in known abbreviations (TP., TS., ThS., GS., v.v.)
+                local is_abbrev = false
+                if c == "." then
+                    local check_window = text:sub(math.max(1, i - 10), i)
+                    local prev_word = check_window:match("([%a%.]+)%.$")
+                    if prev_word then
+                        local lower_pw = prev_word:lower()
+                        local KNOWN_ABBREVS = {
+                            ["tp"] = true, ["ts"] = true, ["ths"] = true, ["pgs"] = true,
+                            ["gs"] = true, ["bs"] = true, ["v.v"] = true, ["nxb"] = true,
+                            ["ks"] = true, ["dr"] = true, ["mr"] = true, ["mrs"] = true,
+                            ["ms"] = true, ["prof"] = true,
+                        }
+                        if KNOWN_ABBREVS[lower_pw] or (prev_word:match("^%u+$") and #prev_word <= 4) then
+                            is_abbrev = true
+                        end
+                    end
+                end
+
+                if not is_decimal and not is_abbrev then
+                    -- Delimiter is valid if outside quotes or immediately followed by closing quote/space
+                    if not in_quotes or next_c == '"' or next_c == '”' or next_c == ' ' or next_c == "" then
+                        is_delimiter = true
+                    end
+                end
+            end
+
+            if is_delimiter then
+                -- Collect contiguous punctuation marks (e.g. !?, ..., !!!)
+                local end_idx = i
+                while end_idx < len do
+                    local peek = text:sub(end_idx + 1, end_idx + 1)
+                    if peek == "." or peek == "?" or peek == "!" or peek == "…" or peek == '"' or peek == '”' then
+                        end_idx = end_idx + 1
+                    else
+                        break
+                    end
+                end
+
+                local s = text:sub(start_idx, end_idx):gsub("^%s+", ""):gsub("%s+$", "")
+                if #s > 0 then
+                    table.insert(raw_sentences, s)
+                end
+
+                i = end_idx + 1
+                start_idx = i
+            else
+                i = i + 1
+            end
         end
     end
 
@@ -313,7 +419,7 @@ function TextChunker:splitSentences(text)
 
     for idx, s in ipairs(raw_sentences) do
         if #buffer > 0 then
-            buffer = buffer .. " " .. s
+            buffer = joinText(buffer, s)
         else
             buffer = s
         end
@@ -326,7 +432,7 @@ function TextChunker:splitSentences(text)
 
     if #buffer > 0 then
         if #merged_sentences > 0 then
-            merged_sentences[#merged_sentences] = merged_sentences[#merged_sentences] .. " " .. buffer
+            merged_sentences[#merged_sentences] = joinText(merged_sentences[#merged_sentences], buffer)
         else
             table.insert(merged_sentences, buffer)
         end
@@ -613,6 +719,18 @@ local function hasSentenceTerminator(s)
             return true
         end
     end
+    -- CJK: skip trailing closing marks (）」》 ...), then look for 。！？ … or ：
+    local k = #trimmed + 1
+    for _ = 1, 8 do
+        local pc = prevChar(trimmed, k)
+        if pc == "" then break end
+        if CLOSERS[pc] or pc == '"' or pc == "'" then
+            k = k - #pc
+        else
+            if SENT_END[pc] or pc == "：" then return true end
+            break
+        end
+    end
     return false
 end
 
@@ -632,12 +750,23 @@ local function findSentenceHead(text)
             end
         end
 
+        if not is_term and c:byte() >= 0xE0 then
+            local ch = charAt(text, i)
+            if SENT_END[ch] or ch == "：" then
+                is_term = true
+                i = i + #ch - 1
+            end
+        end
+
         if is_term then
             local end_idx = i
             while end_idx < len do
                 local peek1 = text:sub(end_idx + 1, end_idx + 1)
+                local peek_ch = charAt(text, end_idx + 1)
                 if peek1 == "." or peek1 == "?" or peek1 == "!" or peek1 == ":" or peek1 == '"' or peek1 == "'" then
                     end_idx = end_idx + 1
+                elseif SENT_END[peek_ch] or CLOSERS[peek_ch] then
+                    end_idx = end_idx + #peek_ch
                 elseif end_idx + 3 <= len then
                     local peek3 = text:sub(end_idx + 1, end_idx + 3)
                     if peek3 == "”" or peek3 == "…" or peek3 == "’" or peek3 == "\226\128\157" or peek3 == "\226\128\166" or peek3 == "\226\128\153" then
@@ -752,7 +881,7 @@ function TextChunker:extractPageChunks(document, page_num, ui)
                         if last_w and first_w and last_w:lower() == first_w:lower() then
                             head = head:gsub("^%s*" .. first_w:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1") .. "%s*", "")
                         end
-                        stitched_raw = last_chunk.raw_text .. " " .. head
+                        stitched_raw = joinText(last_chunk.raw_text, head)
                     end
 
                     local tts_text = self:normalizePronunciation(stitched_raw)
