@@ -246,6 +246,17 @@ function UIPlayer:showControlBar()
     local screen_w = Screen:getWidth()
     local screen_h = Screen:getHeight()
 
+    -- Available inner width: screen minus card padding/border and a safe margin on both sides.
+    -- Every row is sized to fit this, so nothing can run off the screen edges.
+    local card_pad = 8
+    local card_border = Size.border.thin or 1
+    local side_margin = (Screen.scaleBySize and Screen:scaleBySize(10)) or 10
+    local avail_w = screen_w - 2 * (card_pad + card_border) - 2 * side_margin
+    self.layout_w = avail_w
+    local gap = 6
+    local nav_btn_w = math.floor((avail_w - 4 * gap) / 5)
+    local half_btn_w = math.floor((avail_w - gap) / 2)
+
     -- 1. Row 1: Header (Progress title, Buffer status, [—], [✕])
     self.title_widget = TextWidget:new{
         text = string.format(_("Page %d · %d/%d"), self.current_page, self.current_index, self.total_on_page),
@@ -303,6 +314,7 @@ function UIPlayer:showControlBar()
     local btn_prev_page = Button:new{
         text = " |< ",
         bordersize = Size.border.thin or 1,
+        width = nav_btn_w,
         padding = 6,
         callback = function()
             this:onPrevPage()
@@ -313,6 +325,7 @@ function UIPlayer:showControlBar()
     local btn_prev_chunk = Button:new{
         text = " << ",
         bordersize = Size.border.thin or 1,
+        width = nav_btn_w,
         padding = 6,
         callback = function()
             this:onPrevChunk()
@@ -324,6 +337,7 @@ function UIPlayer:showControlBar()
     self.play_pause_btn = Button:new{
         text = is_playing and "  ||  " or "  ▶  ",
         bordersize = Size.border.thin or 1,
+        width = nav_btn_w,
         padding = 10,
         callback = function()
             this:onTogglePlayPause()
@@ -333,6 +347,7 @@ function UIPlayer:showControlBar()
     local btn_next_chunk = Button:new{
         text = " >> ",
         bordersize = Size.border.thin or 1,
+        width = nav_btn_w,
         padding = 6,
         callback = function()
             this:onNextChunk()
@@ -343,6 +358,7 @@ function UIPlayer:showControlBar()
     local btn_next_page = Button:new{
         text = " >| ",
         bordersize = Size.border.thin or 1,
+        width = nav_btn_w,
         padding = 6,
         callback = function()
             this:onNextPage()
@@ -354,6 +370,7 @@ function UIPlayer:showControlBar()
     self.speed_btn = Button:new{
         text = string.format(_("Speed: %.1fx"), cur_speed),
         bordersize = Size.border.thin or 1,
+        width = half_btn_w,
         padding = 6,
         callback = function()
             this:showSpeedDialog()
@@ -363,29 +380,36 @@ function UIPlayer:showControlBar()
     self.sleep_timer_btn = Button:new{
         text = self.sleep_timer and self.sleep_timer:getDisplayText() or _("Sleep timer: Off"),
         bordersize = Size.border.thin or 1,
+        width = half_btn_w,
         padding = 6,
         callback = function()
             this:showSleepTimerDialog()
         end,
     }
 
+    -- Row 2: navigation buttons (5 equal-width buttons)
     local controls_row = HorizontalGroup:new{
         align = "center",
         btn_prev_page,
-        HorizontalSpan:new{ width = 6 },
+        HorizontalSpan:new{ width = gap },
         btn_prev_chunk,
-        HorizontalSpan:new{ width = 6 },
+        HorizontalSpan:new{ width = gap },
         self.play_pause_btn,
-        HorizontalSpan:new{ width = 6 },
+        HorizontalSpan:new{ width = gap },
         btn_next_chunk,
-        HorizontalSpan:new{ width = 6 },
+        HorizontalSpan:new{ width = gap },
         btn_next_page,
-        HorizontalSpan:new{ width = 18 },
-        self.speed_btn,
-        HorizontalSpan:new{ width = 8 },
-        self.sleep_timer_btn,
     }
     self.controls_row = controls_row
+
+    -- Row 3: quick settings (speed / sleep timer), two equal-width buttons
+    local settings_row = HorizontalGroup:new{
+        align = "center",
+        self.speed_btn,
+        HorizontalSpan:new{ width = gap },
+        self.sleep_timer_btn,
+    }
+    self.settings_row = settings_row
 
     local content_group = VerticalGroup:new{
         align = "center",
@@ -393,6 +417,8 @@ function UIPlayer:showControlBar()
         header_row,
         VerticalSpan:new{ width = 8 },
         controls_row,
+        VerticalSpan:new{ width = 6 },
+        settings_row,
         VerticalSpan:new{ width = 4 },
     }
     self.content_group = content_group
@@ -404,7 +430,7 @@ function UIPlayer:showControlBar()
         margin = 0,
         bordersize = Size.border.thin or 1,
         background = Blitbuffer.COLOR_WHITE,
-        padding = 8,
+        padding = card_pad,
         radius = 6,
         content_group,
     }
@@ -499,13 +525,26 @@ function UIPlayer:_layoutHeaderSpaceBetween()
         return
     end
 
-    local total_w = (self.controls_row.getSize and self.controls_row:getSize().w) or 460
-    local w_title = (self.title_widget and self.title_widget.getSize and self.title_widget:getSize().w) or 160
-    local w_buffer = (self.buffer_status_widget and self.buffer_status_widget.getSize and self.buffer_status_widget:getSize().w) or 120
-    local w_actions = (self.header_actions and self.header_actions.getSize and self.header_actions:getSize().w) or 60
+    local function wid(w, default)
+        return (w and w.getSize and w:getSize().w) or default
+    end
 
+    local total_w = self.layout_w or wid(self.controls_row, 460)
+    local w_title = wid(self.title_widget, 160)
+    local w_actions = wid(self.header_actions, 60)
+
+    -- Use the full buffer text; fall back to dots only if the row would not fit
+    if self.buffer_status_widget and self.buffer_status_widget.setText and self._buf_full then
+        self.buffer_status_widget:setText(self._buf_full)
+    end
+    local w_buffer = wid(self.buffer_status_widget, 120)
     local free_space = total_w - (w_title + w_buffer + w_actions)
-    local gap = math.max(16, math.floor(free_space / 2))
+    if free_space < 32 and self.buffer_status_widget and self.buffer_status_widget.setText and self._buf_short then
+        self.buffer_status_widget:setText(self._buf_short)
+        w_buffer = wid(self.buffer_status_widget, 60)
+        free_space = total_w - (w_title + w_buffer + w_actions)
+    end
+    local gap = math.max(4, math.floor(free_space / 2))
 
     self.header_span1.width = gap
     self.header_span2.width = gap
@@ -540,6 +579,7 @@ function UIPlayer:hideControlBar()
         self.header_span2 = nil
         self.header_actions = nil
         self.controls_row = nil
+        self.settings_row = nil
         self.content_group = nil
     end
 end
@@ -725,6 +765,8 @@ function UIPlayer:_updateBufferStatus()
         status_suffix = string.format(" (%.1fs)", sec)
     end
     local status_text = string.format(_("Buffer: %s%s"), dots, status_suffix)
+    self._buf_full = status_text
+    self._buf_short = dots
 
     if self.buffer_status_widget.setText then
         self.buffer_status_widget:setText(status_text)
