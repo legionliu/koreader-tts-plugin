@@ -147,9 +147,14 @@ function TTSClient:_ensureCacheDir()
         for part in self.cache_dir:gmatch("[^/\\]+") do
             table.insert(parts, part)
         end
-        local current = ""
+        -- Keep heading "/" for absolute path
+        local current = self.cache_dir:sub(1, 1) == "/" and "/" or ""
         for _, p in ipairs(parts) do
-            current = (current == "") and p or (current .. "/" .. p)
+            if current == "" or current == "/" then
+                current = current .. p
+            else
+                current = current .. "/" .. p
+            end
             lfs.mkdir(current)
         end
     else
