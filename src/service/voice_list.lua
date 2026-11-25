@@ -12,6 +12,29 @@ M.GROUPS = {
     { id = "ru", title = "Russian",      prefix = "^ru%-" },
 }
 
+-- Languages offered in "Voice by book language" (code = ISO 639-1, matches the voice-name prefix)
+M.LANGUAGES = {
+    { code = "zh", title = "Chinese 中文" },
+    { code = "en", title = "English" },
+    { code = "ru", title = "Russian" },
+    { code = "ja", title = "Japanese" },
+    { code = "ko", title = "Korean" },
+    { code = "fr", title = "French" },
+    { code = "de", title = "German" },
+    { code = "es", title = "Spanish" },
+    { code = "vi", title = "Vietnamese" },
+}
+
+--- voices whose language/name starts with "<code>-" (e.g. "zh" -> zh-CN, zh-TW, zh-HK ...)
+function M.filterByLang(list, code)
+    local out = {}
+    local prefix = "^" .. code .. "%-"
+    for _, v in ipairs(list) do
+        if (v.language or ""):find(prefix) or v.name:find(prefix) then out[#out + 1] = v end
+    end
+    return out
+end
+
 -- Built-in fallback (used only if the server list can't be fetched and nothing is cached).
 local BUILTIN = {
     { "zh-CN", "Xiaoxiao", "Female" }, { "zh-CN", "Xiaoyi", "Female" },

@@ -384,6 +384,11 @@ function KoreaderTTS:onResumePreviousSession()
         }
     end
 
+    pcall(function()
+        local page_chunks = self.chunker:extractPageChunks(document, last_page, self.ui)
+        self:_applyVoiceForBook(page_chunks)
+    end)
+
     if self.playback_queue then
         self.playback_queue.document = document
         self.playback_queue.chunker = self.chunker
@@ -575,6 +580,44 @@ function KoreaderTTS:onTestSingleSentence()
 end
 
 --- Start TTS reading session (Task 2.1 & Phase 4 Preload Queue)
+--- Pick the voice that was set up for the book's language (see "Voice by book language").
+-- Returns a short note for the on-screen message, or nil when nothing was changed.
+function KoreaderTTS:_applyVoiceForBook(chunks)
+    if self.settings:get("auto_voice") == false then return nil end
+    local presets = self.settings:get("voice_by_language")
+    if type(presets) ~= "table" or next(presets) == nil then return nil end
+    local ok_ld, LD = pcall(require, "src.service.language_detect")
+    if not ok_ld or not LD then return nil end
+
+    local parts, total = {}, 0
+    for _idx, c in ipairs(chunks or {}) do
+        local t = c.text or ""
+        parts[#parts + 1] = t
+        total = total + #t
+        if total > 3000 then break end
+    end
+    local meta = self.ui and self.ui.doc_props and self.ui.doc_props.language
+    local typo = self.ui and self.ui.typography and self.ui.typography.text_lang_tag
+    local code = LD.resolve(table.concat(parts, " "), meta, typo)
+
+    local voice = code and presets[code]
+    if not voice then
+        if self._auto_voice_active then
+            -- previous book used a preset; go back to the default voice
+            self._auto_voice_active = false
+            if self.engine and self.engine.updateConfig then
+                self.engine:updateConfig({ voice = self.settings:get("voice") })
+            end
+        end
+        return nil
+    end
+    if self.engine and self.engine.updateConfig then
+        self.engine:updateConfig({ voice = voice })
+    end
+    self._auto_voice_active = true
+    return string.format(_("Voice (%s): %s"), tostring(code), voice)
+end
+
 function KoreaderTTS:onStartTTS()
     local document = self.ui and self.ui.document
     local current_page = self:getCurrentPageNumber()
@@ -652,6 +695,10 @@ function KoreaderTTS:onStartTTS()
         _("Text-to-Speech:\nPage: %d | Total sentences: %d\nSentence 1: %s"),
         current_page, chunk_count, preview
     )
+    local voice_note = self:_applyVoiceForBook(chunks)
+    if voice_note then
+        msg = msg .. "\n" .. voice_note
+    end
     UIManager:show(InfoMessage:new{
         text = msg,
         timeout = 3,
@@ -1292,11 +1339,18 @@ function KoreaderTTS:showSettingsDialog()
         end)
     end
 
-    local function showVoiceMenu(VoiceList, voices, title)
+    -- opts (all optional): current = voice to tick, on_choose(name_or_nil), on_done(), clear_text
+    local function showVoiceMenu(VoiceList, voices, title, opts)
+        opts = opts or {}
         local Menu = require("ui/widget/menu")
         local Screen = require("device").screen
-        local current = this.settings:get("voice") or ""
+        local current = opts.current or this.settings:get("voice") or ""
+        local on_choose = opts.on_choose or saveVoice
+        local on_done = opts.on_done or reopenSettings
         local items = {}
+        if opts.clear_text then
+            items[#items + 1] = { text = opts.clear_text, clear = true }
+        end
         for _idx, v in ipairs(voices) do
             items[#items + 1] = {
                 text = ((v.name == current) and "✓ " or "") .. VoiceList.shortName(v),
@@ -1314,15 +1368,15 @@ function KoreaderTTS:showSettingsDialog()
             width = Screen:getWidth(),
             height = Screen:getHeight(),
             onMenuChoice = function(_self, item)
-                if item and item.voice_name then
+                if item and (item.voice_name or item.clear) then
                     chosen = true
-                    saveVoice(item.voice_name)
+                    on_choose(item.voice_name) -- nil when "clear" was chosen
                     UIManager:close(menu)
-                    reopenSettings()
+                    UIManager:nextTick(on_done)
                 end
             end,
             close_callback = function()
-                if not chosen then reopenSettings() end
+                if not chosen then UIManager:nextTick(on_done) end
             end,
         }
         UIManager:show(menu)
@@ -1378,12 +1432,8 @@ function KoreaderTTS:showSettingsDialog()
         UIManager:show(group_dialog)
     end
 
-    local function openVoiceInput()
-        local ok_vl, VoiceList = pcall(require, "src.service.voice_list")
-        if not ok_vl then
-            vlog("TTS: voice_list module missing: " .. tostring(VoiceList))
-            return openVoiceTextInput()
-        end
+    --- Load the voice list (server -> cache -> built-in) behind a short "Loading..." message
+    local function withVoiceList(VoiceList, callback)
         local loading = InfoMessage:new{ text = _("Loading voice list..."), timeout = 15 }
         UIManager:show(loading)
         UIManager:forceRePaint()
@@ -1393,11 +1443,108 @@ function KoreaderTTS:showSettingsDialog()
             UIManager:close(loading)
             if not ok_l or not voices or #voices == 0 then
                 vlog("TTS: voice list load failed: " .. tostring(voices))
-                return openVoiceTextInput()
+                return callback(nil)
             end
             if err then vlog("TTS: voice list fetch error: " .. tostring(err)) end
+            callback(voices, source, err)
+        end)
+    end
+
+    local function openVoiceInput()
+        local ok_vl, VoiceList = pcall(require, "src.service.voice_list")
+        if not ok_vl then
+            vlog("TTS: voice_list module missing: " .. tostring(VoiceList))
+            return openVoiceTextInput()
+        end
+        withVoiceList(VoiceList, function(voices, source, err)
+            if not voices then return openVoiceTextInput() end
             openVoiceGroupDialog(VoiceList, voices, source, err)
         end)
+    end
+
+    -- ===== Voice per book language: tap a language, pick the voice to use for books in that language =====
+    local openLanguageVoiceMenu
+
+    local function setLanguageVoice(code, name)
+        local presets = {}
+        for k, v in pairs(this.settings:get("voice_by_language") or {}) do presets[k] = v end
+        presets[code] = name -- nil removes the preset
+        this.settings:set("voice_by_language", presets)
+        this.settings:save()
+    end
+
+    local function pickLanguageVoice(VoiceList, lang)
+        withVoiceList(VoiceList, function(voices)
+            local list = voices and VoiceList.filterByLang(voices, lang.code) or {}
+            if #list == 0 then
+                UIManager:show(InfoMessage:new{
+                    text = string.format(_("No %s voices found on the server."), lang.title),
+                    timeout = 4,
+                })
+                return UIManager:nextTick(openLanguageVoiceMenu)
+            end
+            local presets = this.settings:get("voice_by_language") or {}
+            local ok_m, err_m = pcall(showVoiceMenu, VoiceList, list, lang.title, {
+                current = presets[lang.code],
+                clear_text = _("(none - use the default voice)"),
+                on_choose = function(name) setLanguageVoice(lang.code, name) end,
+                on_done = function() openLanguageVoiceMenu() end,
+            })
+            if not ok_m then
+                vlog("TTS: language voice menu error: " .. tostring(err_m))
+                openLanguageVoiceMenu()
+            end
+        end)
+    end
+
+    openLanguageVoiceMenu = function()
+        local ok_vl, VoiceList = pcall(require, "src.service.voice_list")
+        if not ok_vl then return reopenSettings() end
+        local Menu = require("ui/widget/menu")
+        local Screen = require("device").screen
+        local presets = this.settings:get("voice_by_language") or {}
+        local auto_on = this.settings:get("auto_voice") ~= false
+        local items = {
+            {
+                text = (auto_on and "[ON]  " or "[OFF]  ") .. _("Auto-select voice by book language"),
+                toggle = true,
+            },
+        }
+        for _idx, lang in ipairs(VoiceList.LANGUAGES) do
+            local p = presets[lang.code]
+            items[#items + 1] = {
+                text = lang.title,
+                mandatory = p and VoiceList.shortName({ name = p }) or "-",
+                lang = lang,
+            }
+        end
+        local menu
+        local done = false
+        menu = Menu:new{
+            title = _("Voice by book language"),
+            item_table = items,
+            is_borderless = true,
+            is_popout = false,
+            width = Screen:getWidth(),
+            height = Screen:getHeight(),
+            onMenuChoice = function(_self, item)
+                if item and item.toggle then
+                    done = true
+                    this.settings:set("auto_voice", not auto_on)
+                    this.settings:save()
+                    UIManager:close(menu)
+                    UIManager:nextTick(openLanguageVoiceMenu)
+                elseif item and item.lang then
+                    done = true
+                    UIManager:close(menu)
+                    UIManager:nextTick(function() pickLanguageVoice(VoiceList, item.lang) end)
+                end
+            end,
+            close_callback = function()
+                if not done then reopenSettings() end
+            end,
+        }
+        UIManager:show(menu)
     end
 
     local openSpeedInput
@@ -1476,6 +1623,15 @@ function KoreaderTTS:showSettingsDialog()
             end
         end
 
+        local voice_by_lang_summary
+        do
+            local presets = this.settings:get("voice_by_language") or {}
+            local n = 0
+            for _k in pairs(presets) do n = n + 1 end
+            local auto_on = this.settings:get("auto_voice") ~= false
+            voice_by_lang_summary = string.format("%s, %d set", auto_on and _("On") or _("Off"), n)
+        end
+
         local sv_buttons = {
             {
                 {
@@ -1504,6 +1660,16 @@ function KoreaderTTS:showSettingsDialog()
                     callback = function()
                         UIManager:close(sv_dialog)
                         UIManager:scheduleIn(0.05, openVoiceInput)
+                    end,
+                },
+            },
+            {
+                {
+                    text = string.format(_("    Voice by book language: %s"), voice_by_lang_summary),
+                    align = "left",
+                    callback = function()
+                        UIManager:close(sv_dialog)
+                        UIManager:scheduleIn(0.05, openLanguageVoiceMenu)
                     end,
                 },
             },

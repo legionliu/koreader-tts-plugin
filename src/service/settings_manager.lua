@@ -45,6 +45,10 @@ local DEFAULT_SETTINGS = {
 
     -- 7. Pronunciation dictionary & custom mappings
     custom_pronunciations = {},                        -- Custom table { [orig_word] = "replacement" }
+
+    -- 8. Voice per book language
+    auto_voice          = true,                        -- Pick the voice by the book's language when reading starts
+    voice_by_language   = {},                          -- { zh = "zh-CN-XiaoxiaoNeural", en = "en-US-AvaNeural", ... }
 }
 
 -- Default abbreviations to expanded pronunciation for TTS (multilingual: VI & EN)
