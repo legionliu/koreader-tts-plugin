@@ -105,20 +105,26 @@ run_test("PlayerWidget: Control bar and mini bubble toggle", function()
         settings = sm,
     })
 
+    -- The player starts as the small bubble; tapping its label expands to the full control bar
+    assert(player.is_mini == true)
+    player:show()
+    assert(player.mini_bubble ~= nil)
+    assert(player.control_bar == nil)
+
+    player:toggleMode()
     assert(player.is_mini == false)
-    player:showControlBar()
     assert(player.control_bar ~= nil)
+    assert(player.mini_bubble == nil)
 
     player:toggleMode()
     assert(player.is_mini == true)
     assert(player.mini_bubble ~= nil)
 
+    -- Closing resets to the start mode, so the next reading session starts small again
     player:toggleMode()
-    assert(player.is_mini == false)
-    assert(player.control_bar ~= nil)
-
     player:hide()
     assert(player.visible == false)
+    assert(player.is_mini == true)
 end)
 
 run_test("PlayerWidget: Playback speed cycling", function()

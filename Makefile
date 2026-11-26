@@ -38,18 +38,24 @@ test-rust:
 
 test-lua:
 	@echo "=== [2/2] Running Lua Unit & Acceptance Test Suites ==="
-	@echo "-> [1/6] Running Localization (i18n) tests..."
+	@echo "-> [1/9] Running Localization (i18n) tests..."
 	@luajit tests/test_i18n.lua || exit 1
-	@echo "-> [2/6] Running Bridge tests..."
+	@echo "-> [2/9] Running Bridge tests..."
 	@luajit tests/test_bridge.lua || exit 1
-	@echo "-> [3/6] Running Engine Strategy tests..."
+	@echo "-> [3/9] Running Engine Strategy tests..."
 	@luajit tests/test_engine.lua || exit 1
-	@echo "-> [4/6] Running Application Service tests..."
+	@echo "-> [4/9] Running Application Service tests..."
 	@luajit tests/test_service.lua || exit 1
-	@echo "-> [5/6] Running Presentation UI tests..."
+	@echo "-> [5/9] Running Presentation UI tests..."
 	@luajit tests/test_ui.lua || exit 1
-	@echo "-> [6/6] Running End-to-End Acceptance tests..."
+	@echo "-> [6/9] Running End-to-End Acceptance tests..."
 	@luajit tests/test_acceptance.lua || exit 1
+	@echo "-> [7/9] Running Voice-by-language tests..."
+	@luajit tests/test_voice_by_language.lua || exit 1
+	@echo "-> [8/9] Running Toolbar opacity tests..."
+	@luajit tests/test_toolbar_opacity.lua || exit 1
+	@echo "-> [9/9] Running Page jump tests..."
+	@luajit tests/test_page_jump.lua || exit 1
 	@echo "=== ALL LUA TESTS PASSED 100% ==="
 
 install-adb: package

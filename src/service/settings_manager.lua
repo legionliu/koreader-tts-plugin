@@ -49,6 +49,10 @@ local DEFAULT_SETTINGS = {
     -- 8. Voice per book language
     auto_voice          = true,                        -- Pick the voice by the book's language when reading starts
     voice_by_language   = {},                          -- { zh = "zh-CN-XiaoxiaoNeural", en = "en-US-AvaNeural", ... }
+
+    -- 9. Reading toolbar look (percent, 30 - 100; 100 = opaque)
+    player_opacity_full = 85,                          -- Full toolbar
+    player_opacity_mini = 90,                          -- Small bubble
 }
 
 -- Default abbreviations to expanded pronunciation for TTS (multilingual: VI & EN)
@@ -196,6 +200,8 @@ function Settings:set(key, value)
         end
     elseif key == "cache_max_mb" then
         value = math.max(20, math.min(1000, math.floor(value)))
+    elseif key == "player_opacity_full" or key == "player_opacity_mini" then
+        value = math.max(30, math.min(100, math.floor(value)))
     end
 
     self.data[key] = value

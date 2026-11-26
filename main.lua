@@ -143,6 +143,8 @@ function KoreaderTTS:init()
         settings = self.settings,
         audio_backend = self.audio_backend,
         chunker = chunker,
+        get_voice = function() return self._current_voice or self.settings:get("voice") end,
+        on_voice = function() self:showReadingVoiceDialog() end,
     }
 
     -- Put "Text-to-Speech" at the TOP of the Tools menu (KOReader appends items that are
@@ -580,42 +582,163 @@ function KoreaderTTS:onTestSingleSentence()
 end
 
 --- Start TTS reading session (Task 2.1 & Phase 4 Preload Queue)
---- Pick the voice that was set up for the book's language (see "Voice by book language").
--- Returns a short note for the on-screen message, or nil when nothing was changed.
+--- Use this voice for the rest of this reading session (not saved as the default voice)
+function KoreaderTTS:_setReadingVoice(voice)
+    if type(voice) ~= "string" or voice == "" then return end
+    if self.engine and self.engine.updateConfig then
+        self.engine:updateConfig({ voice = voice })
+    end
+    self._current_voice = voice
+    if self.ui_player and self.ui_player.setVoiceLabel then
+        pcall(self.ui_player.setVoiceLabel, self.ui_player, voice)
+    end
+end
+
+--- Work out the book's language and, if a voice was set up for it, switch to that voice.
+-- Returns a short note for the on-screen message, or nil when the voice was not changed.
 function KoreaderTTS:_applyVoiceForBook(chunks)
-    if self.settings:get("auto_voice") == false then return nil end
-    local presets = self.settings:get("voice_by_language")
-    if type(presets) ~= "table" or next(presets) == nil then return nil end
     local ok_ld, LD = pcall(require, "src.service.language_detect")
     if not ok_ld or not LD then return nil end
 
-    local parts, total = {}, 0
-    for _idx, c in ipairs(chunks or {}) do
-        local t = c.text or ""
-        parts[#parts + 1] = t
-        total = total + #t
-        if total > 3000 then break end
+    local code, source
+    if self._lang_override then
+        code, source = self._lang_override, "manual"
+    else
+        local parts, total = {}, 0
+        for _idx, c in ipairs(chunks or {}) do
+            local t = c.text or ""
+            parts[#parts + 1] = t
+            total = total + #t
+            if total > 3000 then break end
+        end
+        local meta = self.ui and self.ui.doc_props and self.ui.doc_props.language
+        local typo = self.ui and self.ui.typography and self.ui.typography.text_lang_tag
+        code, source = LD.resolve(table.concat(parts, " "), meta, typo)
     end
-    local meta = self.ui and self.ui.doc_props and self.ui.doc_props.language
-    local typo = self.ui and self.ui.typography and self.ui.typography.text_lang_tag
-    local code = LD.resolve(table.concat(parts, " "), meta, typo)
+    self._book_lang, self._book_lang_source = code, source
+    if self._current_voice == nil then
+        self._current_voice = self.settings:get("voice")
+    end
+
+    if self.settings:get("auto_voice") == false then return nil end
+    local presets = self.settings:get("voice_by_language")
+    if type(presets) ~= "table" or next(presets) == nil then return nil end
 
     local voice = code and presets[code]
     if not voice then
         if self._auto_voice_active then
             -- previous book used a preset; go back to the default voice
             self._auto_voice_active = false
-            if self.engine and self.engine.updateConfig then
-                self.engine:updateConfig({ voice = self.settings:get("voice") })
-            end
+            self:_setReadingVoice(self.settings:get("voice"))
         end
         return nil
     end
-    if self.engine and self.engine.updateConfig then
-        self.engine:updateConfig({ voice = voice })
-    end
+    self:_setReadingVoice(voice)
     self._auto_voice_active = true
     return string.format(_("Voice (%s): %s"), tostring(code), voice)
+end
+
+--- Reading toolbar -> voice button: shows the book's language and the voice in use
+function KoreaderTTS:showReadingVoiceDialog()
+    local VoiceList = require("src.service.voice_list")
+    local VD = require("src.ui.voice_dialogs").new(self)
+    local this = self
+
+    local code = self._book_lang
+    local lang_obj
+    for _idx, l in ipairs(VoiceList.LANGUAGES) do
+        if l.code == code then lang_obj = l end
+    end
+    local lang_title = (lang_obj and lang_obj.title) or (code and code:upper()) or _("unknown")
+    local source_names = {
+        text = _("detected from the text"),
+        metadata = _("from the book's metadata"),
+        typography = _("from the reader's language setting"),
+        manual = _("chosen by you"),
+    }
+    local source_text = source_names[self._book_lang_source or ""] or ""
+    local voice = self._current_voice or self.settings:get("voice")
+
+    local dialog
+    local function again()
+        UIManager:nextTick(function() this:showReadingVoiceDialog() end)
+    end
+    local function leave(action)
+        UIManager:close(dialog)
+        UIManager:nextTick(action)
+    end
+
+    local buttons = {}
+    if lang_obj then
+        buttons[#buttons + 1] = {{
+            text = string.format(_("Change voice for %s..."), lang_obj.title),
+            callback = function()
+                leave(function()
+                    VD:pickLanguageVoice(lang_obj, {
+                        on_chosen = function(name)
+                            this:_setReadingVoice(name or this.settings:get("voice"))
+                        end,
+                        on_done = again,
+                    })
+                end)
+            end,
+        }}
+    end
+    buttons[#buttons + 1] = {{
+        text = _("Change book language..."),
+        callback = function()
+            leave(function()
+                VD:chooseLanguage(function(lang)
+                    this._lang_override = lang.code
+                    this._book_lang, this._book_lang_source = lang.code, "manual"
+                    local presets = this.settings:get("voice_by_language") or {}
+                    if presets[lang.code] then
+                        this:_setReadingVoice(presets[lang.code])
+                        again()
+                    else
+                        -- no voice set for this language yet: choose one now
+                        VD:pickLanguageVoice(lang, {
+                            on_chosen = function(name)
+                                if name then this:_setReadingVoice(name) end
+                            end,
+                            on_done = again,
+                        })
+                    end
+                end, again)
+            end)
+        end,
+    }}
+    buttons[#buttons + 1] = {{
+        text = _("Pick any voice (this session only)..."),
+        callback = function()
+            leave(function()
+                VD:openVoiceInput{
+                    current = voice,
+                    on_choose = function(name) this:_setReadingVoice(name) end,
+                    on_done = again,
+                }
+            end)
+        end,
+    }}
+    buttons[#buttons + 1] = {{
+        text = _("Plugin settings..."),
+        callback = function()
+            leave(function() this:showSettingsDialog() end)
+        end,
+    }}
+    buttons[#buttons + 1] = {{
+        text = _("Close"),
+        callback = function() UIManager:close(dialog) end,
+    }}
+
+    dialog = ButtonDialog:new{
+        title = string.format("%s: %s%s\n%s: %s",
+            _("Book language"), lang_title,
+            source_text ~= "" and (" (" .. source_text .. ")") or "",
+            _("Voice in use"), tostring(voice)),
+        buttons = buttons,
+    }
+    UIManager:show(dialog)
 end
 
 function KoreaderTTS:onStartTTS()
@@ -1276,62 +1399,8 @@ function KoreaderTTS:showSettingsDialog()
         input_dialog:onShowKeyboard()
     end
 
-    local function openVoiceTextInput()
-        local input_dialog
-        input_dialog = InputDialog:new{
-            title = _("Select Voice"),
-            input = this.settings:get("voice") or "alloy",
-            input_hint = "alloy",
-            buttons = {
-                {
-                    {
-                        text = _("Cancel"),
-                        id = "cancel",
-                        callback = function()
-                            UIManager:close(input_dialog)
-                            UIManager:nextTick(function()
-                                if openServerAndVoiceDialog then openServerAndVoiceDialog() end
-                            end)
-                        end,
-                    },
-                    {
-                        text = _("Save"),
-                        is_enter_default = true,
-                        callback = function()
-                            local val = input_dialog:getInputText()
-                            if val and val ~= "" then
-                                this.settings:set("voice", val)
-                                this.settings:save()
-                                if this.engine and this.engine.updateConfig then
-                                    this.engine:updateConfig({ voice = val })
-                                end
-                            end
-                            UIManager:close(input_dialog)
-                            UIManager:nextTick(function()
-                                if openServerAndVoiceDialog then openServerAndVoiceDialog() end
-                            end)
-                        end,
-                    },
-                },
-            },
-        }
-        UIManager:show(input_dialog)
-        input_dialog:onShowKeyboard()
-    end
-
-    -- ===== Voice picker: choose language group, then pick a voice from the server's list =====
-    local function vlog(msg)
-        local ok_lg, lg = pcall(require, "logger")
-        if ok_lg and lg and lg.warn then lg.warn(msg) end
-    end
-
-    local function saveVoice(val)
-        this.settings:set("voice", val)
-        this.settings:save()
-        if this.engine and this.engine.updateConfig then
-            this.engine:updateConfig({ voice = val })
-        end
-    end
+    -- Voice dialogs live in src/ui/voice_dialogs.lua (shared with the reading toolbar)
+    local VD = require("src.ui.voice_dialogs").new(this)
 
     local function reopenSettings()
         UIManager:nextTick(function()
@@ -1339,212 +1408,71 @@ function KoreaderTTS:showSettingsDialog()
         end)
     end
 
-    -- opts (all optional): current = voice to tick, on_choose(name_or_nil), on_done(), clear_text
-    local function showVoiceMenu(VoiceList, voices, title, opts)
-        opts = opts or {}
-        local Menu = require("ui/widget/menu")
-        local Screen = require("device").screen
-        local current = opts.current or this.settings:get("voice") or ""
-        local on_choose = opts.on_choose or saveVoice
-        local on_done = opts.on_done or reopenSettings
-        local items = {}
-        if opts.clear_text then
-            items[#items + 1] = { text = opts.clear_text, clear = true }
-        end
-        for _idx, v in ipairs(voices) do
-            items[#items + 1] = {
-                text = ((v.name == current) and "✓ " or "") .. VoiceList.shortName(v),
-                mandatory = v.language,
-                voice_name = v.name,
-            }
-        end
-        local menu
-        local chosen = false
-        menu = Menu:new{
-            title = title,
-            item_table = items,
-            is_borderless = true,
-            is_popout = false,
-            width = Screen:getWidth(),
-            height = Screen:getHeight(),
-            onMenuChoice = function(_self, item)
-                if item and (item.voice_name or item.clear) then
-                    chosen = true
-                    on_choose(item.voice_name) -- nil when "clear" was chosen
-                    UIManager:close(menu)
-                    UIManager:nextTick(on_done)
-                end
-            end,
-            close_callback = function()
-                if not chosen then UIManager:nextTick(on_done) end
-            end,
-        }
-        UIManager:show(menu)
+    local function openVoiceInput()
+        VD:openVoiceInput{ on_done = reopenSettings }
     end
 
-    local function openVoiceGroupDialog(VoiceList, all_voices, source, err)
-        local group_dialog
-        local buttons = {}
-        local function openList(list, list_title)
-            UIManager:close(group_dialog)
+    local function openLanguageVoiceMenu()
+        VD:openLanguageVoiceMenu(reopenSettings)
+    end
+
+    -- Toolbar opacity (full toolbar / small bubble)
+    local function openOpacityDialog()
+        local ok_sw, SpinWidget = pcall(require, "ui/widget/spinwidget")
+        local dialog
+        local function pick(key, title, default)
+            UIManager:close(dialog)
+            if not ok_sw then
+                UIManager:show(InfoMessage:new{ text = _("Opacity picker is not available in this KOReader version."), timeout = 4 })
+                return
+            end
             UIManager:nextTick(function()
-                local ok_m, err_m = pcall(showVoiceMenu, VoiceList, list, list_title)
-                if not ok_m then
-                    vlog("TTS: voice menu error: " .. tostring(err_m))
-                    openVoiceTextInput()
-                end
+                UIManager:show(SpinWidget:new{
+                    title_text = title,
+                    info_text = _("100% = solid. Lower values let the page show through."),
+                    value = this.settings:get(key) or default,
+                    value_min = 30,
+                    value_max = 100,
+                    value_step = 5,
+                    value_hold_step = 10,
+                    unit = "%",
+                    default_value = default,
+                    default_text = string.format(_("Default (%d%%)"), default),
+                    ok_text = _("Apply"),
+                    callback = function(spin)
+                        this.settings:set(key, spin.value)
+                        this.settings:save()
+                        if this.ui_player and this.ui_player.refreshBars then
+                            pcall(this.ui_player.refreshBars, this.ui_player)
+                        end
+                    end,
+                    close_callback = function()
+                        UIManager:nextTick(function() openOpacityDialog() end)
+                    end,
+                })
             end)
         end
-        for _idx, g in ipairs(VoiceList.GROUPS) do
-            local group = VoiceList.filter(all_voices, g.id)
-            if #group > 0 then
-                buttons[#buttons + 1] = {{
-                    text = string.format("%s (%d)", g.title, #group),
-                    callback = function() openList(group, g.title) end,
-                }}
-            end
-        end
-        buttons[#buttons + 1] = {{
-            text = string.format(_("All languages (%d)"), #all_voices),
-            callback = function() openList(all_voices, _("All languages")) end,
-        }}
-        buttons[#buttons + 1] = {{
-            text = _("Type voice name manually..."),
-            callback = function()
-                UIManager:close(group_dialog)
-                UIManager:nextTick(openVoiceTextInput)
-            end,
-        }}
-        buttons[#buttons + 1] = {{
-            text = _("Cancel"),
-            callback = function()
-                UIManager:close(group_dialog)
-                reopenSettings()
-            end,
-        }}
-        local src_note = (source == "server") and _("Voice list loaded from server")
-            or (source == "cache") and _("Server unreachable - using cached voice list")
-            or _("Server unreachable - using built-in voice list")
-        group_dialog = ButtonDialog:new{
-            title = string.format("%s\n%s: %s", src_note, _("Current voice"), tostring(this.settings:get("voice") or "")),
-            buttons = buttons,
-        }
-        UIManager:show(group_dialog)
-    end
-
-    --- Load the voice list (server -> cache -> built-in) behind a short "Loading..." message
-    local function withVoiceList(VoiceList, callback)
-        local loading = InfoMessage:new{ text = _("Loading voice list..."), timeout = 15 }
-        UIManager:show(loading)
-        UIManager:forceRePaint()
-        UIManager:nextTick(function()
-            local ok_l, voices, source, err = pcall(VoiceList.load,
-                this.settings:get("server_url"), this.settings:get("api_key"), this.cache_dir, 10)
-            UIManager:close(loading)
-            if not ok_l or not voices or #voices == 0 then
-                vlog("TTS: voice list load failed: " .. tostring(voices))
-                return callback(nil)
-            end
-            if err then vlog("TTS: voice list fetch error: " .. tostring(err)) end
-            callback(voices, source, err)
-        end)
-    end
-
-    local function openVoiceInput()
-        local ok_vl, VoiceList = pcall(require, "src.service.voice_list")
-        if not ok_vl then
-            vlog("TTS: voice_list module missing: " .. tostring(VoiceList))
-            return openVoiceTextInput()
-        end
-        withVoiceList(VoiceList, function(voices, source, err)
-            if not voices then return openVoiceTextInput() end
-            openVoiceGroupDialog(VoiceList, voices, source, err)
-        end)
-    end
-
-    -- ===== Voice per book language: tap a language, pick the voice to use for books in that language =====
-    local openLanguageVoiceMenu
-
-    local function setLanguageVoice(code, name)
-        local presets = {}
-        for k, v in pairs(this.settings:get("voice_by_language") or {}) do presets[k] = v end
-        presets[code] = name -- nil removes the preset
-        this.settings:set("voice_by_language", presets)
-        this.settings:save()
-    end
-
-    local function pickLanguageVoice(VoiceList, lang)
-        withVoiceList(VoiceList, function(voices)
-            local list = voices and VoiceList.filterByLang(voices, lang.code) or {}
-            if #list == 0 then
-                UIManager:show(InfoMessage:new{
-                    text = string.format(_("No %s voices found on the server."), lang.title),
-                    timeout = 4,
-                })
-                return UIManager:nextTick(openLanguageVoiceMenu)
-            end
-            local presets = this.settings:get("voice_by_language") or {}
-            local ok_m, err_m = pcall(showVoiceMenu, VoiceList, list, lang.title, {
-                current = presets[lang.code],
-                clear_text = _("(none - use the default voice)"),
-                on_choose = function(name) setLanguageVoice(lang.code, name) end,
-                on_done = function() openLanguageVoiceMenu() end,
-            })
-            if not ok_m then
-                vlog("TTS: language voice menu error: " .. tostring(err_m))
-                openLanguageVoiceMenu()
-            end
-        end)
-    end
-
-    openLanguageVoiceMenu = function()
-        local ok_vl, VoiceList = pcall(require, "src.service.voice_list")
-        if not ok_vl then return reopenSettings() end
-        local Menu = require("ui/widget/menu")
-        local Screen = require("device").screen
-        local presets = this.settings:get("voice_by_language") or {}
-        local auto_on = this.settings:get("auto_voice") ~= false
-        local items = {
-            {
-                text = (auto_on and "[ON]  " or "[OFF]  ") .. _("Auto-select voice by book language"),
-                toggle = true,
+        dialog = ButtonDialog:new{
+            title = _("Toolbar opacity"),
+            buttons = {
+                {{
+                    text = string.format(_("Full toolbar: %d%%"), this.settings:get("player_opacity_full") or 85),
+                    callback = function() pick("player_opacity_full", _("Full toolbar opacity"), 85) end,
+                }},
+                {{
+                    text = string.format(_("Small bubble: %d%%"), this.settings:get("player_opacity_mini") or 90),
+                    callback = function() pick("player_opacity_mini", _("Small bubble opacity"), 90) end,
+                }},
+                {{
+                    text = _("Back to Settings"),
+                    callback = function()
+                        UIManager:close(dialog)
+                        reopenSettings()
+                    end,
+                }},
             },
         }
-        for _idx, lang in ipairs(VoiceList.LANGUAGES) do
-            local p = presets[lang.code]
-            items[#items + 1] = {
-                text = lang.title,
-                mandatory = p and VoiceList.shortName({ name = p }) or "-",
-                lang = lang,
-            }
-        end
-        local menu
-        local done = false
-        menu = Menu:new{
-            title = _("Voice by book language"),
-            item_table = items,
-            is_borderless = true,
-            is_popout = false,
-            width = Screen:getWidth(),
-            height = Screen:getHeight(),
-            onMenuChoice = function(_self, item)
-                if item and item.toggle then
-                    done = true
-                    this.settings:set("auto_voice", not auto_on)
-                    this.settings:save()
-                    UIManager:close(menu)
-                    UIManager:nextTick(openLanguageVoiceMenu)
-                elseif item and item.lang then
-                    done = true
-                    UIManager:close(menu)
-                    UIManager:nextTick(function() pickLanguageVoice(VoiceList, item.lang) end)
-                end
-            end,
-            close_callback = function()
-                if not done then reopenSettings() end
-            end,
-        }
-        UIManager:show(menu)
+        UIManager:show(dialog)
     end
 
     local openSpeedInput
@@ -1700,6 +1628,17 @@ function KoreaderTTS:showSettingsDialog()
                     callback = function()
                         UIManager:close(sv_dialog)
                         UIManager:scheduleIn(0.05, openAudioFormatDialog)
+                    end,
+                },
+            },
+            {
+                {
+                    text = string.format(_("    Toolbar opacity: %d%% / %d%%"),
+                        this.settings:get("player_opacity_full") or 85, this.settings:get("player_opacity_mini") or 90),
+                    align = "left",
+                    callback = function()
+                        UIManager:close(sv_dialog)
+                        UIManager:scheduleIn(0.05, openOpacityDialog)
                     end,
                 },
             },

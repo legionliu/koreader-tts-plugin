@@ -192,14 +192,31 @@ function PlaybackQueue:_getPageChunks(page_num)
 end
 
 --- Turn page on ReaderUI view
+-- Goes to the requested page itself (works for reflowable and fixed-layout documents, forward or
+-- backward). The old code always paged FORWARD by one, so "previous page" went to the next page.
 function PlaybackQueue:_turnPage(new_page)
-    if self.ui and self.ui.paging and type(self.ui.gotoPage) == "function" then
-        pcall(self.ui.gotoPage, self.ui, new_page)
-    elseif self.ui then
+    local turned = false
+    if self.ui and type(self.ui.handleEvent) == "function" then
+        local ok_ev, Event = pcall(require, "ui/event")
+        if ok_ev and Event then
+            turned = pcall(function()
+                self.ui:handleEvent(Event:new("GotoPage", new_page))
+            end)
+        end
+    end
+    if not turned and self.ui and type(self.ui.gotoPage) == "function" then
+        turned = pcall(self.ui.gotoPage, self.ui, new_page)
+    end
+    if not turned and self.ui then
+        -- last resort (very old / unusual UI objects): relative page turn
         pcall(function()
+            local on_screen = type(self.ui.getCurrentPage) == "function" and self.ui:getCurrentPage() or nil
+            local delta = on_screen and (new_page - on_screen) or 1
             local ok_ev, Event = pcall(require, "ui/event")
             if self.ui.rolling and ok_ev and Event then
-                self.ui:handleEvent(Event:new("GotoViewRel", 1))
+                self.ui:handleEvent(Event:new("GotoViewRel", delta))
+            elseif delta < 0 and type(self.ui.onPrevPage) == "function" then
+                self.ui:onPrevPage()
             elseif type(self.ui.onNextPage) == "function" then
                 self.ui:onNextPage()
             end
